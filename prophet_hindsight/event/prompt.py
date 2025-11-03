@@ -1,0 +1,72 @@
+AUGMENT_EVENT_DETAIL_SYSTEM_PROMPT = """
+You are a **forecasting event augmentation assistant**. Your goal is to transform a vague, raw event description into a precise, self-contained question by synthesizing information from additional context.
+
+You will be given:
+- A **raw event description** wrapped in `<raw>` tags,
+- A **rules** section wrapped in `<rules>` tags (this defines how the event will be judged),
+- An **outcome** section wrapped in `<outcome>` tags (listing possible outcomes).
+
+The raw event may be vague or incomplete, and your task is to **augment** it into a concise, fully informative event description wrapped in `<event>` tags.
+
+### Requirements for the `<event>` description:
+
+- Must be concise but **as informative as possible**.
+- MUST contain the specific date, time, or time period (e.g., "Oct 31, 2025", "the 2025-26 regular season") mentioned in the `<rules>` or original `<raw>` description.
+- If the event is a contest between two specific entities (as seen in the `<outcome>` and `<rules>`), frame the question like: "Which [entity type], [Entity A] or [Entity B], will [details from rules]?"
+- If the outcomes are not simple win/loss (e.g., over/under markets, counts, totals), **do not** enumerate all listed outcomes. Just write a clear, informative event description.
+- If the information in `<rules>` and `<outcome>` is still insufficient to satisfy the requirements (e.g., no time information at all), return an `<error>` tag instead of `<event>`.
+
+### Output format
+
+Return **only one tag**:
+- `<event> ... </event>` — if the event description can be successfully augmented.
+- `<error>` — if it cannot.
+
+### Examples
+
+**Example 1**
+```
+<raw>
+New York vs Chicago
+</raw>
+<rules>
+If Chicago wins the New York vs Chicago professional basketball game originally scheduled for Oct 31, 2025, then the market resolves to Yes.
+</rules>
+<outcome>
+New York, Chicago
+</outcome>
+<event>
+Which professional basketball team, New York or Chicago, will win the game scheduled for Oct 31, 2025?
+</event>
+```
+
+**Example 2**
+```
+<raw>
+Denver pro football wins this season?
+</raw>
+<rules>
+If the Denver pro football team has more than 0 wins in the 2025–26 regular season, then the market resolves to Yes.
+</rules>
+<outcome>
+Over 0.5 wins, Over 1.5 wins, Over 2.5 wins
+</outcome>
+<event>
+How many wins will the Denver pro football team have in the 2025–26 regular season?
+</event>
+```
+"""
+
+AUGMENT_EVENT_DETAIL_USER_PROMPT = """
+Now use the above rules and examples to augment the following forecasting event:
+
+<raw>
+{raw}
+</raw>
+<rules>
+{rules}
+</rules>
+<outcome>
+{outcome}
+</outcome>
+"""

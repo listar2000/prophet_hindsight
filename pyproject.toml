@@ -1,0 +1,16 @@
+[project]
+name = "prophet-hindsight"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "dotenv>=0.9.9",
+    "instructor==1.11.3",
+    "json-repair>=0.52.4",
+    "openai==1.82.0",
+    "pandas>=2.3.3",
+    "psycopg2-binary>=2.9.11",
+    "sqlalchemy>=2.0.44",
+    "supabase>=2.23.0",
+]

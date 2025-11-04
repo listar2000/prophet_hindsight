@@ -141,7 +141,39 @@ def top_z_score_criteria(results_df: pd.DataFrame, metric_col: str = 'brier_scor
     return filtered_df
 
 
-def augment_results_with_sources(
+def ambiguous_event_criteria(results_df: pd.DataFrame, metric_col: str = "brier_score", min_val: int = 0.25, max_val: int = 0.15, top_k: int = -1):
+    """
+    Filter by the following criteria:
+    - We first group by `submission_id`. We only retain groups where all the predictions within it have Brier score > max_val.
+    - Then for these groups, we leave only the predictions with Brier score < min_val.
+    """
+    ascending = metric_col == "brier_score"  # Brier score is lower is better
+    if ascending:
+        assert min_val > max_val, "min_val must be greater than max_val for ascending metrics"
+        # manually swap so later logic can be consistent
+        min_val, max_val = max_val, min_val
+    else:
+        assert min_val < max_val, "min_val must be less than max_val for descending metrics"
+    
+    # Step 1: Group by submission_id and keep only groups where ALL predictions have metric > min_val
+    grouped = results_df.groupby('submission_id')
+    valid_groups = grouped.filter(lambda x: (x[metric_col] > min_val).all())
+    
+    # Step 2: Within those valid groups, keep only predictions with metric < max_val (and the top k predictions if provided)
+    # Otherwise, we keep all predictions whose metric is < max_val.
+    filtered_results = valid_groups[valid_groups[metric_col] < max_val]
+    
+    if top_k > 0:
+        # Sort by metric (ascending for metrics where lower is better) and take top k per group
+        filtered_results = (filtered_results
+                           .sort_values(metric_col, ascending=ascending)
+                           .groupby('submission_id', as_index=False)
+                           .head(top_k))
+    
+    return filtered_results
+
+
+def _augment_results_with_sources(
     results_df: pd.DataFrame,
     engine,
     submission_id_col: str = "submission_id",
@@ -230,7 +262,7 @@ def augment_results_with_sources(
     return out
 
 
-def augment_results_with_prediction_context(
+def _augment_results_with_prediction_context(
     results_df: pd.DataFrame,
     engine,
     submission_id_col: str = "submission_id",
@@ -316,7 +348,7 @@ def augment_results_with_prediction_context(
     return out
 
 
-def augment_results_with_event_details(results_df: pd.DataFrame, engine, event_ticker_col: str = "event_ticker", filter_category: str = None) -> pd.DataFrame:
+def _augment_results_with_event_details(results_df: pd.DataFrame, engine, event_ticker_col: str = "event_ticker", filter_category: str = None) -> pd.DataFrame:
     """
     Augment each row of `results_df` with the event title from the `event` table.
     Matches on event_ticker to get the specific event title.
@@ -365,7 +397,7 @@ def augment_results_with_event_details(results_df: pd.DataFrame, engine, event_t
     return out
 
 
-def augment_results_with_market_data(results_df: pd.DataFrame, submission_df: pd.DataFrame | str, submission_id_col: str = "submission_id") -> pd.DataFrame:
+def _augment_results_with_market_data(results_df: pd.DataFrame, submission_df: pd.DataFrame | str, submission_id_col: str = "submission_id") -> pd.DataFrame:
     if isinstance(submission_df, str):
         # load it from the csv
         submission_df = pd.read_csv(submission_df)
@@ -394,25 +426,29 @@ def augment_filtered_predictions(filtered_df: pd.DataFrame, engine: "Engine" = N
     filter_contributor_only: list[str] = None, filter_category: str = None) -> pd.DataFrame:
     if engine is None:
         engine = get_engine()
-    augmented_df = augment_results_with_sources(filtered_df, engine, filter_contributor_only=filter_contributor_only)
-    augmented_df = augment_results_with_prediction_context(augmented_df, engine)
-    augmented_df = augment_results_with_event_details(augmented_df, engine, filter_category=filter_category)
+    # make sure market-baselines are removed at this point
+    filtered_df = filtered_df[~filtered_df["forecaster"].str.startswith("market-baseline")]
+    augmented_df = _augment_results_with_sources(filtered_df, engine, filter_contributor_only=filter_contributor_only)
+    augmented_df = _augment_results_with_prediction_context(augmented_df, engine)
+    augmented_df = _augment_results_with_event_details(augmented_df, engine, filter_category=filter_category)
 
     if submission_df_path is not None:
         submission_df = pd.read_csv(submission_df_path)
-        augmented_df = augment_results_with_market_data(augmented_df, submission_df)
+        augmented_df = _augment_results_with_market_data(augmented_df, submission_df)
 
     return augmented_df
 
+
 if __name__ == "__main__":
-    brier_df = pd.read_csv("data/raw/full_data/evals/brier_score.csv")
+    brier_df = pd.read_csv("data/raw/full_data/evals/brier_score_with_mb.csv")
     old_len = len(brier_df)
 
     # filter out all the rows where the forecaster starts with "agent-"
     brier_df = brier_df[~brier_df["forecaster"].str.startswith("agent-")]
 
     print(f"Filtered out {old_len - len(brier_df)} rows")
-    filtered_df = top_z_score_criteria(brier_df, metric_col="brier_score", min_z=1.5, min_val=0.15)
+    # filtered_df = top_z_score_criteria(brier_df, metric_col="brier_score", min_z=1.5, min_val=0.15)
+    filtered_df = ambiguous_event_criteria(brier_df, metric_col="brier_score", min_val=0.2, max_val=0.15, top_k=5)
 
     augmented_df = augment_filtered_predictions(filtered_df, submission_df_path="data/raw/full_data/submissions.csv", \
         filter_contributor_only=["o3", "gpt-4o"], filter_category=["Sports"])
@@ -422,5 +458,5 @@ if __name__ == "__main__":
           f"Number of unique submissions: {len(augmented_df['submission_id'].unique())}\n" \
           f"Number of unique events: {len(augmented_df['event_ticker'].unique())}")
 
-    augmented_df.to_csv("data/raw/full_data/reasoning/filtered_predictions.csv", index=False)
-    augmented_df.to_json("data/raw/full_data/reasoning/filtered_predictions.json", orient="index", indent=2)
+    augmented_df.to_csv("data/raw/full_data/reasoning/hard_predictions.csv", index=False)
+    augmented_df.to_json("data/raw/full_data/reasoning/hard_predictions.json", orient="index", indent=2)

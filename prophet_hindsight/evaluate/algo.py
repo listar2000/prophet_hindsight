@@ -140,10 +140,11 @@ def add_market_baseline_predictions(forecasts: pd.DataFrame, reference_forecaste
         use_both_sides: If True, we will add the market baseline predictions for both YES and NO sides
     """
     if reference_forecaster is None:
-        # if no reference forecaster is provided, we use the first forecaster
-        reference_forecaster = forecasts['forecaster'].unique()[0]
+        # if no reference forecaster is provided, we take the first forecast from each group (grouped by `submission_id`)
+        market_baseline_forecasts = forecasts.groupby('submission_id', as_index=False).first()
+    else:
+        market_baseline_forecasts = forecasts[forecasts['forecaster'] == reference_forecaster].copy()
 
-    market_baseline_forecasts = forecasts[forecasts['forecaster'] == reference_forecaster].copy()
     market_baseline_forecasts['forecaster'] = 'market-baseline'
 
     def turn_odds_to_prediction(row: pd.Series) -> np.ndarray:
@@ -524,12 +525,14 @@ if __name__ == "__main__":
     weight_fn = uniform_weighting()
     forecasts = ProphetForecasts.from_directory(path, weight_fn)
 
+    forecasts_with_market_baseline = add_market_baseline_predictions(forecasts.data)
+
     # avg_returns = compute_average_return_neutral(forecasts.data, spread_market_even=False)
-    brier_score = compute_brier_score(forecasts.data)
+    brier_score = compute_brier_score(forecasts_with_market_baseline)
     # ece_results = compute_calibration_ece(forecasts.data)
 
     # avg_returns.to_csv(path + "/avg_returns.csv", index=False)
-    brier_score.to_csv(path + "/brier_score.csv", index=False)
+    brier_score.to_csv(path + "/evals/brier_score_with_mb.csv", index=False)
     # ece_results.to_csv(path + "/ece_results.csv", index=False)
 
     exit(0)

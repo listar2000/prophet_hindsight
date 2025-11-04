@@ -73,18 +73,29 @@ def augment_reasoning(judge: LLMJudge, reasoning_df: pd.DataFrame, augmented_tit
         prompt = REASONING_AUGMENT_USER_PROMPT.format(event_info=event_info, sources=sources, market_data=market_data, vanilla_rationale=vanilla_rationale, llm_prediction=llm_prediction)
         prompts.append(prompt)
 
-    async_responses = asyncio.run(judge.async_judge(
+    completed_results, cancelled_ids = asyncio.run(judge.async_judge(
         prompts=prompts,
         builder=MessageBuilder(system_prompt=REASONING_AUGMENT_SYSTEM_PROMPT),
         structure=ReasonAugmentResponse,
+        ids=list(range(len(prompts))),
+        timeout=200,
     ))
 
-    for i, response in enumerate(async_responses):
-        augmented_reasonings[i]['augmented_rationale'] = {
-            'source_analysis': response.source_analysis,
-            'market_analysis': response.market_analysis,
-            'rationale': response.rationale,
-        }
+    if cancelled_ids:
+        logger.warning(f"Failed to get responses for {len(cancelled_ids)} prompts: {cancelled_ids}")
+
+    for i, augmented_reasoning_dict in enumerate(augmented_reasonings):
+        if i in completed_results:
+            response = completed_results[i]
+            augmented_reasoning_dict['augmented_rationale'] = {
+                'source_analysis': response.source_analysis,
+                'market_analysis': response.market_analysis,
+                'rationale': response.rationale,
+            }
+        else:
+            # Mark as failed if not in completed results
+            logger.warning(f"Skipping augmentation for prompt {i} (event_ticker: {augmented_reasoning_dict.get('event_ticker', 'unknown')})")
+            augmented_reasoning_dict['augmented_rationale'] = None
 
     augmented_reasonings_df = pd.DataFrame(augmented_reasonings)
 
@@ -144,12 +155,11 @@ def csv_to_json_helper(csv_path: str, json_path: str = None) -> None:
 
 
 if __name__ == "__main__":
-    # reasoning_df = pd.read_csv("data/raw/full_data/reasoning/filtered_predictions.csv")
-    # augmented_title_df = pd.read_csv("data/raw/full_data/augmented_event_titles.csv")
+    reasoning_df = pd.read_csv("data/raw/full_data/reasoning/hard_predictions.csv")
+    augmented_title_df = pd.read_csv("data/raw/full_data/augmented_hard_event_titles.csv")
 
-    # judge = LLMJudge(model="openai/gpt-5-mini", use_async=True, use_openrouter=False)
+    judge = LLMJudge(model="openai/gpt-5-mini", use_async=True, use_openrouter=False)
 
-    # batch_augment_reasoning(100, judge, reasoning_df, augmented_title_df, \
-    #     save_path="data/raw/full_data/reasoning/gpt-5-mini/augmented_filtered_reasonings_2.csv", start_from_batch=2)
-
-    csv_to_json_helper("data/raw/full_data/reasoning/gpt-5-mini/augmented_filtered_reasonings.csv")
+    batch_augment_reasoning(100, judge, reasoning_df, augmented_title_df, \
+        save_path="data/raw/full_data/reasoning/gpt-5-mini/augmented_hard_reasonings.csv", start_from_batch=1)
+        

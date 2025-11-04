@@ -76,29 +76,44 @@ def augment_event(event_tickers: list[str], judge: LLMJudge, save_path: str = No
     event_details = get_event_details(event_tickers, demo=demo)
     logger.info("Collected {} event details successfully".format(len(event_details)))
 
-    # Build prompts in the same order as event_tickers to maintain alignment
+    # Build prompts and maintain order of event tickers to preserve alignment
     prompts = []
+    ordered_tickers = []
     for ticker in event_details:
+        ordered_tickers.append(ticker)
         raw_event, rules, outcomes = event_details[ticker]
         prompts.append(AUGMENT_EVENT_DETAIL_USER_PROMPT.format(raw=raw_event, rules=rules, outcome=outcomes))
 
-    async_responses = asyncio.run(judge.async_judge(
+    completed_results, cancelled_ids = asyncio.run(judge.async_judge(
         prompts=prompts,
         builder=MessageBuilder(system_prompt=AUGMENT_EVENT_DETAIL_SYSTEM_PROMPT),
         structure=ModelResponse,
+        ids=list(range(len(prompts))),
     ))
+    
+    if cancelled_ids:
+        logger.warning(f"Failed to get responses for {len(cancelled_ids)} prompts: {cancelled_ids}")
     
     results = []
     err, total = 0, 0
-    for event_ticker, response in zip(event_details.keys(), async_responses):
+    for i, event_ticker in enumerate(ordered_tickers):
         total += 1
-        raw_title = event_details[event_ticker][0]  
-        if response.error:
+        raw_title = event_details[event_ticker][0]
+        
+        if i not in completed_results:
+            # Task was cancelled or failed
             err += 1
+            logger.warning(f"Skipping augmentation for event_ticker {event_ticker} (index {i})")
             results.append((event_ticker, raw_title, ""))
         else:
-            augmented_title = response.event.strip
-            results.append((event_ticker, raw_title, post_process_augmented_event(augmented_title)))
+            response = completed_results[i]
+            if response.error:
+                err += 1
+                results.append((event_ticker, raw_title, ""))
+            else:
+                augmented_title = response.event.strip()  # Fixed: strip() is a method call
+                results.append((event_ticker, raw_title, post_process_augmented_event(augmented_title)))
+    
     logger.info(f"Augmented {total} event tickers with {err} errors, success rate: {total - err}/{total}")
 
     if save_path:
@@ -123,14 +138,14 @@ def post_process_augmented_event(augmented_event: str) -> str:
 if __name__ == "__main__":
     import pandas as pd
     # Step 1: Read the event tickers from the filtered predictions
-    filtered_predictions = pd.read_csv("data/raw/full_data/filtered_predictions.csv")
+    filtered_predictions = pd.read_csv("data/raw/full_data/reasoning/hard_predictions.csv")
 
     event_tickers = filtered_predictions["event_ticker"].unique().tolist()
     print("Collected {} event tickers".format(len(event_tickers)))
 
     # Step 2: Augment the event details
-    model_name = "openai/gpt-5"
+    model_name = "openai/gpt-5-mini"
 
     judge = LLMJudge(model=model_name, use_async=True, use_openrouter=False)
-    results = augment_event(event_tickers, judge, save_path=None, demo=True)
+    results = augment_event(event_tickers, judge, save_path="data/raw/full_data/augmented_hard_event_titles.csv", demo=False)
     print(results)

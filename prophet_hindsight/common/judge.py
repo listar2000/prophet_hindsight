@@ -36,10 +36,11 @@ class LLMJudge:
     """
     A basic implementation of an LLM judge.
     """
-    def __init__(self, model: str, use_async: bool = False, use_openrouter: bool = False, **kwargs):
+    def __init__(self, model: str, use_async: bool = False, use_openrouter: bool = False, timeout: int = 180, **kwargs):
         self.model = model
         self.use_async = use_async
         self.use_openrouter = use_openrouter
+        self.timeout = timeout
 
         if self.use_openrouter:
             model = f"openrouter/{model}"
@@ -76,29 +77,58 @@ class LLMJudge:
         return responses
 
     
-    async def async_judge(self, prompts: list[str], builder: MessageBuilder, structure: BaseModel = None, timeout: int = 180, **kwargs) -> list[BaseModel]:
+    async def async_judge(self, prompts: list[str], builder: MessageBuilder, structure: BaseModel = None, ids: list[int] = None, timeout: int = -1, **kwargs) -> tuple[dict[int, BaseModel], list[int]]:
         """
         Judge the prompts using the LLM asynchronously in parallel.
+        
+        Returns:
+            tuple[dict[int, BaseModel], list[int]]: A tuple containing:
+                - A dictionary mapping task IDs to their completed results
+                - A list of task IDs that were cancelled/failed
         """
         if not self.use_async:
             raise NotImplementedError("Please use the sync judge method instead")
+        if ids is not None:
+            assert len(ids) == len(prompts), "The number of ids must be the same as the number of prompts"
+        else:
+            ids = list(range(len(prompts)))
+        if timeout == -1:
+            timeout = self.timeout
 
         # Create tasks from coroutines (asyncio.wait requires tasks, not coroutines)
-        jobs = [asyncio.create_task(self.client.chat.completions.create(
-            messages=builder.build(prompt),
-            response_model=structure,
-            **kwargs,
-        )) for prompt in prompts]
+        # Map each task to its corresponding ID
+        task_to_id = {}
+        jobs = []
+        for i, prompt in enumerate(prompts):
+            task = asyncio.create_task(self.client.chat.completions.create(
+                messages=builder.build(prompt),
+                response_model=structure,
+                **kwargs,
+            ))
+            task_to_id[task] = ids[i]
+            jobs.append(task)
 
         # Gather and await all jobs in parallel with timeout
         done, pending = await asyncio.wait(jobs, timeout=timeout, return_when=asyncio.ALL_COMPLETED)
         
         # Cancel any pending tasks if timeout occurred
+        cancelled_ids = []
         for task in pending:
             task.cancel()
+            cancelled_ids.append(task_to_id[task])
         
-        # Return results from all completed tasks
-        return [task.result() for task in done]
+        # Collect results from completed tasks, handling any exceptions
+        completed_results = {}
+        for task in done:
+            task_id = task_to_id[task]
+            try:
+                result = task.result()
+                completed_results[task_id] = result
+            except Exception as e:
+                # If task completed but raised an exception, treat it as failed
+                cancelled_ids.append(task_id)
+        
+        return completed_results, cancelled_ids
 
 
 if __name__ == "__main__":
@@ -107,9 +137,10 @@ if __name__ == "__main__":
         age: int
 
     judge = LLMJudge(model="gpt-5", use_async=True, use_openrouter=True)
-    async_responses = asyncio.run(judge.async_judge(
+    completed_results, cancelled_ids = asyncio.run(judge.async_judge(
         prompts=["Text: John Doe is 30 years old.", "Text: Jane Smith is 25 years old."],
         builder=MessageBuilder(system_prompt="You are a helpful assistant that extracts the name and age from a text."),
         structure=UserModel,
     ))
-    print(async_responses)
+    print(f"Completed: {completed_results}")
+    print(f"Cancelled IDs: {cancelled_ids}")

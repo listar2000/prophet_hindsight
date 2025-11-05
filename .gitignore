@@ -15,6 +15,7 @@ scripts/*
 slurm_logs/*
 
 .env
+.cache/
 
 # Shell scripts
 *.sh

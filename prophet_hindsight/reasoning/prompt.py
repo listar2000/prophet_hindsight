@@ -42,6 +42,8 @@ If the original rationale is not using any sources or market data at all, just p
 
 ### **RULES**
 - Use first-person pronouns (e.g., "I think", "we believe", "our analysis shows") when describing the forecasting LLM's beliefs and reasoning.
+- The augmented reasoning MUST be written as if it is the forecasting LLM’s own reasoning, not commentary on the original rationale. 
+- MUST NOT contain any phrases like “the original rationale...", “the vanilla rationale previously stated...”, or mention the existence of the original rationale itself.
 - Only include sources the original rationale actually referenced (directly or implicitly).
 - Only include markets the original rationale actually referenced.
 - Do **not** invent evidence. Infer only what is reasonably implied.

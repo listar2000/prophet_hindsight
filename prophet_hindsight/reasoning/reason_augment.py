@@ -34,7 +34,7 @@ def augment_reasoning(judge: LLMJudge, reasoning_df: pd.DataFrame, augmented_tit
     """
     if demo:
         logger.info("Augmenting reasoning for demo (first 10 rows)")
-        reasoning_df = reasoning_df.head(1)
+        reasoning_df = reasoning_df.head(10)
     else:
         logger.info(f"Augmenting reasoning for all {len(reasoning_df)} rows")
 
@@ -155,11 +155,13 @@ def csv_to_json_helper(csv_path: str, json_path: str = None) -> None:
 
 
 if __name__ == "__main__":
-    reasoning_df = pd.read_csv("data/raw/full_data/reasoning/hard_predictions.csv")
-    augmented_title_df = pd.read_csv("data/raw/full_data/augmented_hard_event_titles.csv")
+    reasoning_df = pd.read_csv("data/raw/full_data/reasoning/filtered_predictions.csv")
+    augmented_title_df = pd.read_csv("data/raw/full_data/augmented_event_titles.csv")
 
     judge = LLMJudge(model="openai/gpt-5-mini", use_async=True, use_openrouter=False)
 
+    # augment_reasoning(judge, reasoning_df, augmented_title_df, \
+    #     save_path="data/raw/full_data/reasoning/demo/gpt-5-mini.csv", demo=True)
+
     batch_augment_reasoning(100, judge, reasoning_df, augmented_title_df, \
-        save_path="data/raw/full_data/reasoning/gpt-5-mini/augmented_hard_reasonings.csv", start_from_batch=1)
-        
+        save_path="data/raw/full_data/reasoning/gpt-5-mini/augmented_filtered_reasonings.csv", start_from_batch=1)

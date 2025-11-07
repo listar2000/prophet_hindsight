@@ -12,7 +12,9 @@ wheels/
 # Data
 data/*
 scripts/*
+wandb/*
 slurm_logs/*
+run/*
 
 .env
 .cache/

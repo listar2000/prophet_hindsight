@@ -66,7 +66,7 @@ python trl/scripts/sft.py \
 import argparse
 import os
 
-from accelerate import logging
+from accelerate import logging, PartialState
 from datasets import load_dataset
 from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.models.auto.modeling_auto import MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES
@@ -84,11 +84,12 @@ from trl import (
     get_quantization_config,
 )
 
+import torch
+
+if torch.cuda.is_available():
+    torch.backends.cuda.matmul.allow_tf32 = True
 
 logger = logging.get_logger(__name__)
-
-# Enable logging in a Hugging Face Space
-os.environ.setdefault("TRACKIO_SPACE_ID", "trl-trackio")
 
 
 def main(script_args, training_args, model_args, dataset_args):
@@ -109,37 +110,48 @@ def main(script_args, training_args, model_args, dataset_args):
 
     # Create model
     config = AutoConfig.from_pretrained(model_args.model_name_or_path)
-    valid_image_text_architectures = MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values()
+    model = AutoModelForCausalLM.from_pretrained(model_args.model_name_or_path, **model_kwargs)
 
-    if config.architectures and any(arch in valid_image_text_architectures for arch in config.architectures):
-        from transformers import AutoModelForImageTextToText
+    # Load the dataset with proper synchronization for distributed training
+    # Use main_process_first to ensure dataset is fully loaded before other ranks access it
+    state = PartialState()
+    
+    with state.main_process_first():
+        if dataset_args.datasets and script_args.dataset_name:
+            logger.warning(
+                "Both `datasets` and `dataset_name` are provided. The `datasets` argument will be used to load the "
+                "dataset and `dataset_name` will be ignored."
+            )
+            dataset = get_dataset(dataset_args)
+        elif dataset_args.datasets and not script_args.dataset_name:
+            dataset = get_dataset(dataset_args)
+        elif not dataset_args.datasets and script_args.dataset_name:
+            dataset = load_dataset(
+                script_args.dataset_name, name=script_args.dataset_config, streaming=script_args.dataset_streaming
+            )
+        else:
+            raise ValueError("Either `datasets` or `dataset_name` must be provided.")
+    
+    # Verify required splits exist after all processes have loaded the dataset
+    logger.info(f"Available dataset splits on rank {state.process_index}: {list(dataset.keys())}")
+    if script_args.dataset_train_split not in dataset:
+        raise ValueError(f"Train split '{script_args.dataset_train_split}' not found in dataset. Available: {list(dataset.keys())}")
+    if training_args.eval_strategy != "no" and script_args.dataset_test_split not in dataset:
+        raise ValueError(f"Test split '{script_args.dataset_test_split}' not found in dataset. Available: {list(dataset.keys())}")
 
-        model = AutoModelForImageTextToText.from_pretrained(model_args.model_name_or_path, **model_kwargs)
+    # Shuffle the dataset
+    train_dataset = dataset[script_args.dataset_train_split].shuffle(seed=42)
+    if training_args.eval_strategy != "no":
+        test_dataset = dataset[script_args.dataset_test_split].shuffle(seed=42)
     else:
-        model = AutoModelForCausalLM.from_pretrained(model_args.model_name_or_path, **model_kwargs)
-
-    # Load the dataset
-    if dataset_args.datasets and script_args.dataset_name:
-        logger.warning(
-            "Both `datasets` and `dataset_name` are provided. The `datasets` argument will be used to load the "
-            "dataset and `dataset_name` will be ignored."
-        )
-        dataset = get_dataset(dataset_args)
-    elif dataset_args.datasets and not script_args.dataset_name:
-        dataset = get_dataset(dataset_args)
-    elif not dataset_args.datasets and script_args.dataset_name:
-        dataset = load_dataset(
-            script_args.dataset_name, name=script_args.dataset_config, streaming=script_args.dataset_streaming
-        )
-    else:
-        raise ValueError("Either `datasets` or `dataset_name` must be provided.")
-
+        test_dataset = None
+    
     # Initialize the SFT trainer
     trainer = SFTTrainer(
         model=model,
         args=training_args,
-        train_dataset=dataset[script_args.dataset_train_split],
-        eval_dataset=dataset[script_args.dataset_test_split] if training_args.eval_strategy != "no" else None,
+        train_dataset=train_dataset,
+        eval_dataset=test_dataset,
         peft_config=get_peft_config(model_args),
     )
 

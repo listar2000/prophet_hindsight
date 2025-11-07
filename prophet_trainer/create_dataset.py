@@ -8,8 +8,6 @@ import os
 from datasets import Dataset, DatasetDict
 import logging
 import json_repair
-from tqdm import tqdm
-from joblib import Parallel, delayed
 
 
 logger = logging.getLogger(__name__)
@@ -40,7 +38,7 @@ def concatenate_csv_files(csv_files: list[str], exist_strict: bool = True, save_
     return concatenated_df
 
 
-def message_format(row: pd.Series) -> dict:
+def message_format(row: pd.Series, conversational: bool = True) -> dict:
     event_title = row["title"]
     outcomes = list(json_repair.loads(row["market_outcome"]).keys())
     task_prompt = PredictionPrompts.create_task_prompt(event_title, outcomes)
@@ -54,19 +52,31 @@ def message_format(row: pd.Series) -> dict:
             logger.warning(f"Augmented rationale dict: \n{augmented_rationale_dict}")
             return None
 
-    augmented_rationale_str = f"<source_analysis>\n{augmented_rationale_dict['source_analysis']}</source_analysis>" + \
-        f"<market_analysis>\n{augmented_rationale_dict['market_analysis']}</market_analysis>" + \
-        f"<rationale>\n{augmented_rationale_dict['rationale']}</rationale>"
+    augmented_rationale_str = f"<source_analysis>\n{augmented_rationale_dict['source_analysis']}\n</source_analysis>" + \
+        f"<market_analysis>\n{augmented_rationale_dict['market_analysis']}\n</market_analysis>" + \
+        f"<rationale>\n{augmented_rationale_dict['rationale']}\n</rationale>"
 
-    return {
+    return_dict = {
         "event_ticker": row["event_ticker"],
         "submission_id": row["submission_id"],
-        "messages": [
+    }
+
+    if conversational:
+        return_dict["messages"] = [
             {"role": "system", "content": task_prompt},
             {"role": "user", "content": user_prompt},
             {"role": "assistant", "content": augmented_rationale_str},
         ]
-    }
+    else:
+        return_dict["prompt"] = [
+            {"role": "system", "content": task_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        return_dict["completion"] = [
+            {"role": "assistant", "content": augmented_rationale_str},
+        ]
+
+    return return_dict
 
 
 REPLACE_WORDS = ["vanilla rationale", "original rationale", "vanilla reasoning", "original reasoning"]
@@ -90,11 +100,51 @@ def filter_and_replace_rationale(rationale_df: pd.DataFrame, replace_word: str =
     return filtered_df
 
 
+def pd_train_test_split(df: pd.DataFrame, test_size: float = 0.1, seed: int = -1) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    A pandas-level train/test split (before converting to HuggingFace Dataset)
+    The logic is to group by event_ticker first and find a "smallest" subset of event_tickers that contains the test_size proportion of the data.
+
+    If seed is provided (i.e. not -1), instead of going from event_ticker with smallest size, we simply take random event_ticker
+    until we have the test_size proportion of the data.
+    """
+    test_min_size = int(len(df) * test_size)
+    
+    # step 1: group by and rank the event_tickers and (optionally) rank by row size if no seed is provided
+    event_ticker_sizes = df.groupby("event_ticker").size().reset_index(name="count")
+    
+    if seed != -1:
+        # Random selection: shuffle event_tickers
+        event_ticker_sizes = event_ticker_sizes.sample(frac=1, random_state=seed).reset_index(drop=True)
+    else:
+        # Deterministic selection: sort by size (smallest first)
+        event_ticker_sizes = event_ticker_sizes.sort_values("count", ascending=True).reset_index(drop=True)
+    
+    # step 2: maintain a small loop that keeps adding event_tickers to a set
+    test_event_tickers = set()
+    cumulative_size = 0
+    
+    for _, row in event_ticker_sizes.iterrows():
+        if cumulative_size >= test_min_size:
+            break
+        test_event_tickers.add(row["event_ticker"])
+        cumulative_size += row["count"]
+    
+    logger.info(f"Selected {len(test_event_tickers)} event_tickers for test set with {cumulative_size} total rows (target: {test_min_size})")
+    
+    # step 3: simply take the train & test sets by the event_ticker in the set or not.
+    test_df = df[df["event_ticker"].isin(test_event_tickers)].copy()
+    train_df = df[~df["event_ticker"].isin(test_event_tickers)].copy()
+    
+    return train_df, test_df
+
+
 def create_augmented_rationale_sft_dataset(
     rationale_csv_files: list[str], 
     prediction_csv_files: list[str],
     save_path: str = None,
     test_size: float = 0.1,
+    conversational: bool = False,
     seed: int = 42,
     push_to_hub: bool = False,
     repo_id: str = None,
@@ -109,6 +159,7 @@ def create_augmented_rationale_sft_dataset(
         prediction_csv_files: List of paths to prediction CSV files
         save_path: Optional path to save the dataset locally (as Arrow format)
         test_size: Proportion of data to use for test split (default: 0.1)
+        conversational: Whether to use conversational format (default: True)
         seed: Random seed for train/test split (default: 42)
         push_to_hub: Whether to push the dataset to HuggingFace Hub (default: False)
         repo_id: HuggingFace Hub repository ID (e.g., "username/dataset-name")
@@ -141,28 +192,23 @@ def create_augmented_rationale_sft_dataset(
     if isinstance(combined_df["augmented_rationale"].iloc[0], str):
         combined_df["augmented_rationale"] = combined_df["augmented_rationale"].apply(json_repair.loads)
     
-    # Step 4: Convert to message format (parallel processing)
-    logger.info(f"Converting {len(combined_df)} rows to message format using {n_jobs if n_jobs > 0 else 'all available'} cores...")
+    # Step 4: Pandas train/test split and convert to message format
+    train_df, test_df = pd_train_test_split(combined_df, test_size=test_size, seed=seed)
+    logger.info(f"Converting {len(train_df)} train rows and {len(test_df)} test rows to message format...")
     
-    # Convert dataframe rows to list of Series for parallel processing
-    rows = [row for _, row in combined_df.iterrows()]
-    
-    # Process in parallel with progress bar
-    messages_list = Parallel(n_jobs=n_jobs, backend="loky")(
-        delayed(message_format)(row) for row in tqdm(rows, desc="Processing rows")
-    )
-    
-    # Step 5: Create HuggingFace Dataset
-    dataset = Dataset.from_list([message for message in messages_list if message is not None])
-    logger.info(f"Created dataset with {len(dataset)} examples (removed {len(messages_list) - len(dataset)} rows with None values)")
-    
-    # Step 6: Split into train/test
-    dataset_dict = dataset.train_test_split(test_size=test_size, seed=seed)
-    logger.info(f"Split dataset into train ({len(dataset_dict['train'])}) and test ({len(dataset_dict['test'])})")
+    # Apply message_format and convert to list, filtering out None values
+    train_messages = train_df.apply(lambda x: message_format(x, conversational=conversational), axis=1).dropna().tolist()
+    test_messages = test_df.apply(lambda x: message_format(x, conversational=conversational), axis=1).dropna().tolist()
+
+    # Step 5: Create HuggingFace Dataset from list of dicts
+    train_dataset = Dataset.from_list(train_messages)
+    test_dataset = Dataset.from_list(test_messages)
+    combined_dataset = DatasetDict({"train": train_dataset, "test": test_dataset})
+    logger.info(f"Created train dataset with {len(train_dataset)} examples and test dataset with {len(test_dataset)} examples")
     
     # Step 7: Save to disk if path provided
     if save_path is not None:
-        dataset_dict.save_to_disk(save_path, num_proc=n_jobs)
+        combined_dataset.save_to_disk(save_path, num_proc=n_jobs)
         logger.info(f"Saved dataset to {save_path}")
     
     # Step 8: Push to HuggingFace Hub if requested
@@ -170,10 +216,10 @@ def create_augmented_rationale_sft_dataset(
         if repo_id is None:
             raise ValueError("repo_id must be provided when push_to_hub=True")
         logger.info(f"Pushing dataset to HuggingFace Hub: {repo_id}")
-        dataset_dict.push_to_hub(repo_id, private=private)
+        combined_dataset.push_to_hub(repo_id, private=private)
         logger.info(f"Successfully pushed dataset to {repo_id}")
     
-    return dataset_dict
+    return combined_dataset
 
 
 if __name__ == "__main__":
@@ -199,11 +245,12 @@ if __name__ == "__main__":
     create_augmented_rationale_sft_dataset(
         rationale_csv_files, 
         prediction_csv_files, 
-        save_path="./data/train",
+        save_path="./data/augmented_sft_prompt_completion",
         test_size=0.1,
+        conversational=False,
         seed=42,
         private=False,
         n_jobs=8, 
         push_to_hub=True, 
-        repo_id="listar2000/sports_augmented_sft"
+        repo_id="listar2000/sports_augmented_sft_prompt_completion"
     )

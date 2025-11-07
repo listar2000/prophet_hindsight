@@ -55,7 +55,7 @@ Specifically, the <probabilities> section should be a JSON object with the proba
 2. Use the **exact** outcome names (case-sensitive).
 3. Each probability must be between 0 and 1.
 4. Do not include extra text inside the `<probabilities>` block — only the JSON.
-"""
+""".strip()
 
 
 PREDICTION_USER_PROMPT = """
@@ -69,7 +69,7 @@ Please consider both the market data and the information sources to help you rea
 
 ### Market Data
 {market_data}
-"""
+""".strip()
 
 
 class PredictionPrompts:

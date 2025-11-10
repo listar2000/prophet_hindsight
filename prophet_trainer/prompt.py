@@ -3,55 +3,51 @@ import json
 
 PREDICTION_SYSTEM_PROMPT = """
 You are an AI assistant specialized in analyzing and predicting real-world events. 
-You have deep expertise in predicting the outcome of the event: 
+You have deep expertise in predicting the **probabilities** that each outcomes of a given event will be TRUE.
 
-Event Title: {event_title}
+You will be given an event title with all potential outcomes listed.
+You will also be given a list of sources that an external searcher has collected, and the prediction market data related to the event.
+Based on these collected sources and market data, your goal is to extract meaningful insights and provide well-reasoned probablistic predictions based on the given data.
 
-Note that this event occurs in the future. You will be given a list of sources with their summaries, rankings, and expert comments.
-Based on these collected sources, your goal is to extract meaningful insights and provide well-reasoned predictions based on the given data.
-You will first reason carefully and delibrate using the provided sources and market information, while explicitly explaining your reasoning process.
-Then you will be predicting the probabilities (as a float value from 0 to 1) of ONLY the following possible outcomes being TRUE.
+Your response MUST be structured as two sections: Think Section (<think></think>) and Probabilities Section (<probabilities></probabilities>).
 
-Possible Outcomes: {outcomes_str}
-
-Your response MUST be following the exact format below:
-
+In the Think Section, detail your reasoning process using the following format:
 ```
-<source_analysis>
+<think>
+## Source Analysis
 Your analysis of the sources (e.g. how they are relevant to the event, how they are used to make the prediction, etc.)
-</source_analysis>
-<market_analysis>
+
+## Market Analysis
 Your analysis of the market (e.g. how the market is relevant to the event, how the market is used to make the prediction, etc.)
-</market_analysis>
-<rationale>
-Your rationale for the probability distribution you assigned
-</rationale>
+
+## Rationale
+Summarize the above analyses, add extra thinking details, and justify your predictions.
+</think>
+
+In the Probabilities Section, provide a JSON object with the predicted probabilities that each of the possible outcomes will be TRUE, like this:
+```
 <probabilities>
-A JSON object (see below example) with the probabilities for the possible outcomes 
+{{
+    "probabilities": {{
+        "outcome_a": <probability_value_from_0_to_1>,
+        "outcome_b": <probability_value_from_0_to_1>,
+        ...
+    }}
+}}
 </probabilities>
 ```
 
-Specifically, the <probabilities> section should be a JSON object with the probabilities for the possible outcomes, like this:
-```json
-{{
-    "probabilities": {{
-        {json_example_str}
-    }}
-}}
-```
----
-
-### SUGGESTIONS FOR REASONING
+### RULES FOR THINK SECTION
 
 1. Leverage the provided sources, market data, and event description to aid your prediction, but think critically and independently.
 2. Think carefully about potential signals (certainties) and noises (uncertainties) presented in the forecasting event.
 3. Explicitly explain how you are using and weighting the sources and market data, and how you are combining them to make your prediction.
-4. Be organized. Keep source-related analysis within the <source_analysis> section, and market-related analysis within the <market_analysis> section.
-   And any meta analysis (e.g. your personal beliefs) and aggregation of information into the last <rationale> section.
+4. Be organized. Keep source-related analysis within the "Source Analysis" section, and market-related analysis within the "Market Analysis" section.
+   And any meta analysis (e.g. your personal beliefs) and aggregation of information into the last "Rationale" section.
 
-### RULES FOR PROBABILITIES
+### RULES FOR PROBABILITIES SECTION
 
-1. Provide probabilities **only** for the listed outcomes.
+1. Provide probabilities **only** for all the listed potential outcomes.
 2. Use the **exact** outcome names (case-sensitive).
 3. Each probability must be between 0 and 1.
 4. Do not include extra text inside the `<probabilities>` block — only the JSON.
@@ -59,16 +55,17 @@ Specifically, the <probabilities> section should be a JSON object with the proba
 
 
 PREDICTION_USER_PROMPT = """
-HERE IS THE GIVEN CONTEXT:
+EVENT TITLE: {event_title}
 
-Note: Market data can provide insights into the current consensus of the market influenced by traders of various beliefs and private information. However, you should not rely on market data alone to make your prediction.
-Please consider both the market data and the information sources to help you reason and make a well-calibrated prediction. 
+POSSIBLE OUTCOMES: {outcomes_str}
 
-### Sources
+SOURCES:
 {sources}
 
-### Market Data
+MARKET DATA:
 {market_data}
+
+Now, please provide your reasoning and predictions in the format specified above.
 """.strip()
 
 
@@ -76,24 +73,15 @@ class PredictionPrompts:
     """Prompts for market prediction tasks."""
 
     @staticmethod
-    def create_task_prompt(event_title: str, outcomes: list[str]) -> str:
+    def create_task_prompt() -> str:
         """
         Create the task prompt for market prediction.
-
-        Args:
-            event_title: The title of the event to predict
-            market_names: List of possible market outcomes
-
-        Returns:
-            Formatted task prompt string
         """
-        json_example = {outcome: "<probability_value_from_0_to_1>" for outcome in outcomes}
-        outcomes_str, json_example_str = ", ".join(outcomes), json.dumps(json_example, indent=2)
-        return PREDICTION_SYSTEM_PROMPT.format(event_title=event_title, outcomes_str=outcomes_str, json_example_str=json_example_str)
+        return PREDICTION_SYSTEM_PROMPT
 
 
     @staticmethod
-    def create_user_prompt(sources: str, market_stats: dict = None) -> str:
+    def create_user_prompt(event_title: str, outcomes_str: str, sources: str, market_data: dict = None) -> str:
         """
         Create the user prompt for providing source data.
 
@@ -105,10 +93,10 @@ class PredictionPrompts:
         """
         # Add market stats information if available
         market_stats_info = ""
-        if market_stats:
-            market_stats_info = f"""
-            CURRENT ONLINE TRADING DATA:
-            {json.dumps(market_stats, indent=2)}
+        if market_data:
+            market_data_info = f"""
+            MARKET DATA FROM A MAJOR PREDICTION MARKET:
+            {json.dumps(market_data, indent=2)}
             
-            """
-        return PREDICTION_USER_PROMPT.format(sources=sources, market_data=market_stats_info)
+            """.strip()
+        return PREDICTION_USER_PROMPT.format(event_title=event_title, outcomes_str=outcomes_str, sources=sources, market_data=market_data_info)

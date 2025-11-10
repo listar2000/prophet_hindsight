@@ -47,7 +47,7 @@ def get_model_outputs(model, tokenizer, messages: list[list[dict]]):
     prompts = [message[:2] for message in messages]  # discard the assistant message (last message)
 
     texts = [
-        tokenizer.apply_chat_template(prompt, tokenize=False, add_generation_prompt=True, enable_thinking=True)
+        tokenizer.apply_chat_template(prompt, tokenize=False, add_generation_prompt=True, enable_thinking=False)
         for prompt in prompts
     ]
     model_inputs = tokenizer(texts, return_tensors="pt", padding=True).to(model.device)

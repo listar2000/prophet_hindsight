@@ -8,6 +8,7 @@ import os
 from datasets import Dataset, DatasetDict
 import logging
 import json_repair
+import json
 
 
 logger = logging.getLogger(__name__)
@@ -40,9 +41,9 @@ def concatenate_csv_files(csv_files: list[str], exist_strict: bool = True, save_
 
 def message_format(row: pd.Series, conversational: bool = True) -> dict:
     event_title = row["title"]
-    outcomes = list(json_repair.loads(row["market_outcome"]).keys())
-    task_prompt = PredictionPrompts.create_task_prompt(event_title, outcomes)
-    user_prompt = PredictionPrompts.create_user_prompt(row["sources"], row["market_data"])
+    outcomes_str = ", ".join(list(json_repair.loads(row["market_outcome"]).keys()))
+    task_prompt = PredictionPrompts.create_task_prompt().strip()
+    user_prompt = PredictionPrompts.create_user_prompt(event_title=event_title, outcomes_str=outcomes_str, sources=row["sources"], market_data=row["market_data"]).strip()
 
     augmented_rationale_dict = row["augmented_rationale"]
     
@@ -52,9 +53,16 @@ def message_format(row: pd.Series, conversational: bool = True) -> dict:
             logger.warning(f"Augmented rationale dict: \n{augmented_rationale_dict}")
             return None
 
-    augmented_rationale_str = f"<source_analysis>\n{augmented_rationale_dict['source_analysis']}\n</source_analysis>" + \
-        f"<market_analysis>\n{augmented_rationale_dict['market_analysis']}\n</market_analysis>" + \
-        f"<rationale>\n{augmented_rationale_dict['rationale']}\n</rationale>"
+    probabilities = json_repair.loads(row["prediction"])["probabilities"]  # type: ignore
+    probabilities_dict = {item["market"]: item["probability"] for item in probabilities}
+    probabilities_str = json.dumps(probabilities_dict, indent=2).strip()
+
+    augmented_rationale_str = f"## Source Analysis\n\n{augmented_rationale_dict['source_analysis']}\n\n" + \
+        f"## Market Analysis\n\n{augmented_rationale_dict['market_analysis']}\n\n" + \
+        f"## Rationale\n\n{augmented_rationale_dict['rationale']}"
+
+    augmented_rationale_str = f"<think>\n{augmented_rationale_str}\n</think>\n" + \
+        f"<probabilities>\n{probabilities_str}\n</probabilities>"
 
     return_dict = {
         "event_ticker": row["event_ticker"],
@@ -177,13 +185,13 @@ def create_augmented_rationale_sft_dataset(
     logger.info(f"After filtering: {len(combined_rationale_df)} rows")
 
     # Step 1.5: Deduplicate prediction dataframe (keep first occurrence of each key)
-    combined_prediction_df = combined_prediction_df.drop_duplicates(subset=["event_ticker", "submission_id"], keep="first")
-    logger.info(f"Deduplicated prediction dataframe: {len(combined_prediction_df)} unique (event_ticker, submission_id) pairs")
+    combined_prediction_df = combined_prediction_df.drop_duplicates(subset=["event_ticker", "submission_id", "forecaster"], keep="first")
+    logger.info(f"Deduplicated prediction dataframe: {len(combined_prediction_df)} unique (event_ticker, submission_id, forecaster) triplets")
 
     # Step 2: Add important columns (e.g. outcomes, market_data, sources) through merging
     combined_df = combined_rationale_df.merge(
-        combined_prediction_df[["event_ticker", "submission_id", "market_outcome", "market_data", "sources"]], 
-        on=["event_ticker", "submission_id"], 
+        combined_prediction_df[["event_ticker", "submission_id", "forecaster", "prediction", "market_outcome", "market_data", "sources"]], 
+        on=["event_ticker", "submission_id", "forecaster"], 
         how="left"
     )
     logger.info(f"After merging: {len(combined_df)} rows")
@@ -245,12 +253,12 @@ if __name__ == "__main__":
     create_augmented_rationale_sft_dataset(
         rationale_csv_files, 
         prediction_csv_files, 
-        save_path="./data/augmented_sft_prompt_completion",
+        save_path="./data/augmented_sft_conversational",
         test_size=0.1,
-        conversational=False,
-        seed=42,
+        conversational=True,
+        seed=123,
         private=False,
         n_jobs=8, 
         push_to_hub=True, 
-        repo_id="listar2000/sports_augmented_sft_prompt_completion"
+        repo_id="listar2000/sports_augmented_sft"
     )

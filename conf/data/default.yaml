@@ -1,0 +1,28 @@
+# Data loading configuration
+# Controls how raw data is fetched from the database
+
+# Database connection URL (loaded from environment variable)
+db_url: ${oc.env:SUPABASE_DB_URL,null}
+
+# Time window for filtering predictions
+# Format: "YYYY-MM-DD HH:MM:SS"
+filter_time_before: "2025-10-23 00:00:00"
+filter_time_after: "2025-10-10 00:00:00"
+
+# If true, only load predictions from predictors starting with 'agent-'
+filter_agent_only: true
+
+# List of source contributors to include (null = all)
+# Example: ["o3", "gpt-4o"]
+filter_contributor_only: null
+
+# List of event categories to include (null = all)
+# Example: ["Sports", "Politics"]
+filter_category: null
+
+# Path to existing predictions CSV (if loading from file instead of DB)
+predictions_path: null
+
+# Path to existing submissions CSV (if loading from file instead of DB)
+submissions_path: null
+

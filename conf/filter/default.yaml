@@ -1,0 +1,39 @@
+# Filtering configuration
+# Controls which predictions are selected for augmentation
+
+# Metric column to use for filtering
+metric_col: "brier_score"
+
+# Z-score based filtering criteria
+# Selects predictions that significantly outperform the mean for their submission
+z_score:
+  enabled: true
+  # Minimum z-score threshold (predictions must be this many std below mean)
+  min_z: 1.5
+  # Maximum mean score to consider (-1 = no limit)
+  # Filters out "too easy" events where everyone does well
+  max_mean: -1
+  # Minimum absolute score threshold (-1 = no limit)
+  min_val: 0.15
+
+# Ambiguous event filtering criteria
+# Selects predictions from events where all predictors have moderate performance
+ambiguous:
+  enabled: true
+  # Minimum score threshold - all predictions must be worse than this
+  min_val: 0.25
+  # Maximum score threshold - selected predictions must be better than this
+  max_val: 0.15
+  # Number of top predictions to keep per submission (-1 = all that meet criteria)
+  top_k: 5
+
+# Absolute score filtering criteria (alternative to z-score)
+absolute:
+  enabled: false
+  # Top k predictions per submission (-1 = use top_p instead)
+  top_k: -1
+  # Top percentage of predictions per submission
+  top_p: 0.1
+  # Minimum score value (-1 = no limit)
+  min_val: -1
+

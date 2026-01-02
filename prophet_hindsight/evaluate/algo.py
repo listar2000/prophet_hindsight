@@ -1,25 +1,30 @@
-import pandas as pd
-import numpy as np
 from typing import Literal
-from prophet_hindsight.evaluate.utils import _bin_stats, _calculate_ece
-from prophet_hindsight.evaluate.bootstrap import compute_bootstrap_ci
 
+import numpy as np
+import pandas as pd
+
+from prophet_hindsight.evaluate.bootstrap import compute_bootstrap_ci
+from prophet_hindsight.evaluate.utils import _bin_stats, _calculate_ece
 
 DEFAULT_BOOTSTRAP_CONFIG = {
-    'num_samples': 1000,
-    'ci_level': 0.9,
-    'num_se': None,
-    'random_seed': 42,
-    'show_progress': True
+    "num_samples": 1000,
+    "ci_level": 0.9,
+    "num_se": None,
+    "random_seed": 42,
+    "show_progress": True,
 }
 
 
-def rank_forecasters_by_score(result_df: pd.DataFrame, normalize_by_round: bool = False, 
-                              score_col: str = None, ascending: bool = None,
-                              bootstrap_config: dict | None = None) -> pd.DataFrame:
+def rank_forecasters_by_score(
+    result_df: pd.DataFrame,
+    normalize_by_round: bool = False,
+    score_col: str = None,
+    ascending: bool = None,
+    bootstrap_config: dict | None = None,
+) -> pd.DataFrame:
     """
     Return a rank_df with columns (forecaster, rank, score).
-    
+
     Args:
         result_df: DataFrame containing forecaster scores
         normalize_by_round: If True, downweight by the number of rounds per (forecaster, event_ticker) group
@@ -33,103 +38,121 @@ def rank_forecasters_by_score(result_df: pd.DataFrame, normalize_by_round: bool 
             - random_seed: Random seed for reproducibility (default: 42)
             - show_progress: Whether to show progress bar (default: True)
             Only supported for 'brier_score' and 'average_return', not 'ece_score'.
-    
+
     Returns:
         DataFrame with rank as index and columns (forecaster, score).
         If bootstrap_config is provided, also includes (se, lower, upper) columns.
     """
     df = result_df.copy()
-    
+
     # Auto-detect score column if not provided
     if score_col is None:
-        if 'brier_score' in df.columns:
-            score_col = 'brier_score'
-        elif 'average_return' in df.columns:
-            score_col = 'average_return'
-        elif 'ece_score' in df.columns:
-            score_col = 'ece_score'
-        elif 'sharpe_ratio' in df.columns:
-            score_col = 'sharpe_ratio'
+        if "brier_score" in df.columns:
+            score_col = "brier_score"
+        elif "average_return" in df.columns:
+            score_col = "average_return"
+        elif "ece_score" in df.columns:
+            score_col = "ece_score"
+        elif "sharpe_ratio" in df.columns:
+            score_col = "sharpe_ratio"
         else:
             raise ValueError("Could not find score column. Please specify 'score_col' parameter.")
-    
+
     # Auto-detect ascending if not provided
     if ascending is None:
         # Lower is better for Brier score and ECE score, higher is better for average return
-        ascending = (score_col in ['brier_score', 'ece_score'])
-    
+        ascending = score_col in ["brier_score", "ece_score"]
+
     # Special handling for ECE scores and Sharpe ratio scores: they're already aggregated per forecaster
-    if score_col in ['ece_score', 'sharpe_ratio']:
+    if score_col in ["ece_score", "sharpe_ratio"]:
         if bootstrap_config is not None:
-            raise ValueError(f"Bootstrap CI is not supported for {score_col} scores (already aggregated)")
-        
+            raise ValueError(
+                f"Bootstrap CI is not supported for {score_col} scores (already aggregated)"
+            )
+
         # These scores are already computed per forecaster, just need to rank and format
-        forecaster_scores = df[['forecaster', score_col]].copy()
-        forecaster_scores.columns = ['forecaster', 'score']
-        
+        forecaster_scores = df[["forecaster", score_col]].copy()
+        forecaster_scores.columns = ["forecaster", "score"]
+
         # Rank forecasters (ascending=True means lower score = better rank)
-        forecaster_scores['rank'] = forecaster_scores['score'].rank(method='min', ascending=ascending).astype(int)
-        
+        forecaster_scores["rank"] = (
+            forecaster_scores["score"].rank(method="min", ascending=ascending).astype(int)
+        )
+
         # Sort by rank and select required columns, then set rank as index
-        rank_df = forecaster_scores[['forecaster', 'rank', 'score']].sort_values('rank')
-        rank_df = rank_df.set_index('rank')[['forecaster', 'score']]
-        
+        rank_df = forecaster_scores[["forecaster", "rank", "score"]].sort_values("rank")
+        rank_df = rank_df.set_index("rank")[["forecaster", "score"]]
+
         return rank_df
-    
+
     # For other metrics (Brier, average return), perform weighted aggregation
     if normalize_by_round:
         # For each (forecaster, event_ticker) group, downweight by number of rounds
         # First, count the number of rounds per (forecaster, event_ticker)
-        round_counts = df.groupby(['forecaster', 'event_ticker']).size().reset_index(name='round_count')
-        
+        round_counts = (
+            df.groupby(["forecaster", "event_ticker"]).size().reset_index(name="round_count")
+        )
+
         # Merge back to get round_count for each row
-        df = df.merge(round_counts, on=['forecaster', 'event_ticker'])
-        
+        df = df.merge(round_counts, on=["forecaster", "event_ticker"])
+
         # Adjust weights by dividing by round_count
-        df['adjusted_weight'] = df['weight'] / df['round_count']
+        df["adjusted_weight"] = df["weight"] / df["round_count"]
     else:
-        df['adjusted_weight'] = df['weight']
-    
+        df["adjusted_weight"] = df["weight"]
+
     # Calculate weighted average score for each forecaster
     # Group by forecaster and compute weighted mean
-    forecaster_scores = df.groupby('forecaster').apply(
-        lambda group: np.dot(group[score_col], group['adjusted_weight']) / np.sum(group['adjusted_weight']),
-        include_groups=False
-    ).reset_index(name='score')
-    
+    forecaster_scores = (
+        df.groupby("forecaster")
+        .apply(
+            lambda group: np.dot(group[score_col], group["adjusted_weight"])
+            / np.sum(group["adjusted_weight"]),
+            include_groups=False,
+        )
+        .reset_index(name="score")
+    )
+
     ci_col_name = None
     if bootstrap_config is not None:
         # Compute bootstrap confidence intervals if requested
         ci_col_name = f'{bootstrap_config["ci_level"] * 100}% ci'
         standard_errors, confidence_intervals = compute_bootstrap_ci(
-            df[['forecaster', score_col]].copy(),
+            df[["forecaster", score_col]].copy(),
             score_col,
-            df['adjusted_weight'].values,
-            bootstrap_config
+            df["adjusted_weight"].values,
+            bootstrap_config,
         )
-        
+
         # Add SE and CI columns to forecaster_scores
         # forecaster_scores['se'] = forecaster_scores['forecaster'].map(standard_errors)
         # forecaster_scores['lower'] = forecaster_scores['forecaster'].map(lambda f: confidence_intervals[f][0])
         # forecaster_scores['upper'] = forecaster_scores['forecaster'].map(lambda f: confidence_intervals[f][1])
-        forecaster_scores[ci_col_name] = \
-            forecaster_scores['forecaster'].map(lambda f: f"±{(confidence_intervals[f][1] - confidence_intervals[f][0]) / 2:.4f}")
-    
+        forecaster_scores[ci_col_name] = forecaster_scores["forecaster"].map(
+            lambda f: f"±{(confidence_intervals[f][1] - confidence_intervals[f][0]) / 2:.4f}"
+        )
+
     # Rank forecasters (ascending=True means lower score = better rank)
-    forecaster_scores['rank'] = forecaster_scores['score'].rank(method='min', ascending=ascending).astype(int)
-    
+    forecaster_scores["rank"] = (
+        forecaster_scores["score"].rank(method="min", ascending=ascending).astype(int)
+    )
+
     # Sort by rank and select required columns, then set rank as index
     if bootstrap_config is not None:
-        rank_df = forecaster_scores[['forecaster', 'rank', 'score', ci_col_name]].sort_values('rank')
-        rank_df = rank_df.set_index('rank')[['forecaster', 'score', ci_col_name]]
+        rank_df = forecaster_scores[["forecaster", "rank", "score", ci_col_name]].sort_values(
+            "rank"
+        )
+        rank_df = rank_df.set_index("rank")[["forecaster", "score", ci_col_name]]
     else:
-        rank_df = forecaster_scores[['forecaster', 'rank', 'score']].sort_values('rank')
-        rank_df = rank_df.set_index('rank')[['forecaster', 'score']]
-    
+        rank_df = forecaster_scores[["forecaster", "rank", "score"]].sort_values("rank")
+        rank_df = rank_df.set_index("rank")[["forecaster", "score"]]
+
     return rank_df
 
 
-def add_market_baseline_predictions(forecasts: pd.DataFrame, reference_forecaster: str = None, use_both_sides: bool = False) -> pd.DataFrame:
+def add_market_baseline_predictions(
+    forecasts: pd.DataFrame, reference_forecaster: str = None, use_both_sides: bool = False
+) -> pd.DataFrame:
     """
     We turn the forecasts from a certain forecaster into market baseline predictions.
     If use_both_sides is True, we will add the market baseline predictions for both YES and NO sides.
@@ -141,34 +164,48 @@ def add_market_baseline_predictions(forecasts: pd.DataFrame, reference_forecaste
     """
     if reference_forecaster is None:
         # if no reference forecaster is provided, we take the first forecast from each group (grouped by `submission_id`)
-        market_baseline_forecasts = forecasts.groupby('submission_id', as_index=False).first()
+        market_baseline_forecasts = forecasts.groupby("submission_id", as_index=False).first()
     else:
-        market_baseline_forecasts = forecasts[forecasts['forecaster'] == reference_forecaster].copy()
+        market_baseline_forecasts = forecasts[
+            forecasts["forecaster"] == reference_forecaster
+        ].copy()
 
-    market_baseline_forecasts['forecaster'] = 'market-baseline'
+    market_baseline_forecasts["forecaster"] = "market-baseline"
 
     def turn_odds_to_prediction(row: pd.Series) -> np.ndarray:
-        odds, no_odds = row['odds'], row['no_odds']
+        odds, no_odds = row["odds"], row["no_odds"]
         if use_both_sides:
             return np.array([(odds[i] + (1 - no_odds[i])) / 2.0 for i in range(len(odds))])
         else:
             return np.array([odds[i] for i in range(len(odds))])
 
-    market_baseline_forecasts['prediction'] = market_baseline_forecasts.apply(turn_odds_to_prediction, axis=1)
+    market_baseline_forecasts["prediction"] = market_baseline_forecasts.apply(
+        turn_odds_to_prediction, axis=1
+    )
 
     # concat market_baseline_forecasts with forecasts (take care of the pd index as well)
     forecasts = pd.concat([forecasts, market_baseline_forecasts]).reset_index(drop=True)
     return forecasts
 
 
-DEFAULT_BRIER_RESULT_COLUMNS = ['forecaster', 'event_ticker', 'submission_id', 'weight', 'round', 'brier_score']
+DEFAULT_BRIER_RESULT_COLUMNS = [
+    "forecaster",
+    "event_ticker",
+    "submission_id",
+    "weight",
+    "round",
+    "brier_score",
+]
 
-def compute_brier_score(forecasts: pd.DataFrame, append: bool = False, additional_columns: list[str] = []) -> pd.DataFrame | None:
+
+def compute_brier_score(
+    forecasts: pd.DataFrame, append: bool = False, additional_columns: list[str] = []
+) -> pd.DataFrame | None:
     """
     Calculate the Brier score for the forecasts. We will proceed by grouping by `event_ticker`, as each resulting group
     will have the same shape (i.e. number of markets), and we can manually construct a np matrix to accelerate the computation.
 
-    The result will be a DataFrame containing (forecaster, event_ticker, round, time_rank, brier_score) 
+    The result will be a DataFrame containing (forecaster, event_ticker, round, time_rank, brier_score)
 
     Args:
         forecasts: DataFrame with columns (forecaster, event_ticker, round, prediction, outcome, weight)
@@ -178,29 +215,29 @@ def compute_brier_score(forecasts: pd.DataFrame, append: bool = False, additiona
         result_df = forecasts.copy()
     else:
         result_df = forecasts
-    
+
     # Initialize brier_score column
-    result_df['brier_score'] = np.nan
-    
+    result_df["brier_score"] = np.nan
+
     # Group by event_ticker and process each group
-    for _, event_group in result_df.groupby('event_ticker'):
+    for _, event_group in result_df.groupby("event_ticker"):
         # Get indices for this group
         group_indices = event_group.index
-        
+
         # prepare the predictions matrix with shape (num_group_elements, num_markets)
-        prediction_matrix = np.stack(event_group['prediction'].values)
-        
+        prediction_matrix = np.stack(event_group["prediction"].values)
+
         # prepare the outcome vector with shape (num_markets,) since it's the same for all group elements
-        outcome_vector = event_group['market_outcome'].iloc[0]
-        
+        outcome_vector = event_group["market_outcome"].iloc[0]
+
         # Calculate Brier score: mean squared difference between predictions and outcomes
         # Brier score = mean((prediction - outcome)^2) for each forecast
         squared_diffs = (prediction_matrix - outcome_vector) ** 2
         brier_scores = np.mean(squared_diffs, axis=1)
-        
+
         # Assign brier scores back to the result dataframe
-        result_df.loc[group_indices, 'brier_score'] = brier_scores
-    
+        result_df.loc[group_indices, "brier_score"] = brier_scores
+
     # Select only the required columns
     if append:
         return result_df
@@ -210,32 +247,36 @@ def compute_brier_score(forecasts: pd.DataFrame, append: bool = False, additiona
         return result_df
 
 
-def compute_average_return_neutral(forecasts: pd.DataFrame, num_money_per_round: float = 1.0, 
-                                   spread_market_even: bool = False, append: bool = False) -> pd.DataFrame | None:
+def compute_average_return_neutral(
+    forecasts: pd.DataFrame,
+    num_money_per_round: float = 1.0,
+    spread_market_even: bool = False,
+    append: bool = False,
+) -> pd.DataFrame | None:
     """
     Calculate the average return for forecasters with risk-neutral utility using binary reduction strategy.
-    
+
     This implementation uses:
     - Risk-neutral betting (all-in on best edge, or spread evenly)
     - Binary reduction (can bet YES or NO on each market)
     - Approximate CRRA betting strategy for risk_aversion=0
-    
+
     For each market, we compare:
     - YES edge: forecast_prob / yes_odds
     - NO edge: (1 - forecast_prob) / no_odds
-    
+
     If spread_market_even is False (default):
         We choose the better edge for each market, then allocate all money to the market with the best edge.
-    
+
     If spread_market_even is True:
         We spread the budget evenly across all markets (budget/m per market), and bet on the better edge
         (YES or NO) in each market.
-    
+
     Args:
         forecasts: DataFrame with columns (forecaster, event_ticker, round, prediction, outcome, odds, no_odds, weight)
         num_money_per_round: Amount of money to bet per round (default: 1.0)
         spread_market_even: If True, spread budget evenly across markets instead of all-in on best market
-    
+
     Returns:
         DataFrame with columns (forecaster, event_ticker, round, weight, average_return)
     """
@@ -243,38 +284,38 @@ def compute_average_return_neutral(forecasts: pd.DataFrame, num_money_per_round:
         result_df = forecasts.copy()
     else:
         result_df = forecasts
-        
-    result_df['average_return'] = np.nan
-    
+
+    result_df["average_return"] = np.nan
+
     # Group by event_ticker and process each event
-    for _, event_group in result_df.groupby('event_ticker'):
+    for _, event_group in result_df.groupby("event_ticker"):
         group_indices = event_group.index
-        
+
         # Stack predictions and odds into matrices: shape (n_forecasters, n_markets)
-        forecast_probs = np.stack(event_group['prediction'].values)  # p_i
-        implied_yes_probs = np.stack(event_group['odds'].values)    # q_i (YES odds)
-        implied_no_probs = np.stack(event_group['no_odds'].values)  # q'_i (NO odds)
-        
+        forecast_probs = np.stack(event_group["prediction"].values)  # p_i
+        implied_yes_probs = np.stack(event_group["odds"].values)  # q_i (YES odds)
+        implied_no_probs = np.stack(event_group["no_odds"].values)  # q'_i (NO odds)
+
         # Outcome is the same for all forecasters in this event
-        outcome_vector = event_group['market_outcome'].iloc[0]  # shape (n_markets,)
-        
+        outcome_vector = event_group["market_outcome"].iloc[0]  # shape (n_markets,)
+
         # Step 1: Calculate edges for YES and NO bets on each market
         # YES edge: p_i / q_i (ratio of forecast prob to YES price)
         # NO edge: (1 - p_i) / q'_i (ratio of forecast NO prob to NO price)
         yes_edges = forecast_probs / implied_yes_probs
         no_edges = (1 - forecast_probs) / implied_no_probs
-        
+
         # Step 2: Choose YES or NO for each market based on which has better edge
         choose_yes = yes_edges > no_edges  # boolean mask: shape (n_forecasters, n_markets)
-        
+
         # Create effective probabilities and prices based on choice
         effective_forecast_probs = np.where(choose_yes, forecast_probs, 1 - forecast_probs)
         effective_implied_probs = np.where(choose_yes, implied_yes_probs, implied_no_probs)
-        
+
         # Step 3: Risk-neutral betting strategy
         n_forecasters, n_markets = forecast_probs.shape
         bets = np.zeros((n_forecasters, n_markets))
-        
+
         if spread_market_even:
             # Spread budget evenly across all markets
             money_per_market = num_money_per_round / n_markets
@@ -286,53 +327,61 @@ def compute_average_return_neutral(forecasts: pd.DataFrame, num_money_per_round:
             # For risk-neutral, we find the market with max edge and bet everything there
             effective_edges = effective_forecast_probs / effective_implied_probs
             best_market_idx = np.argmax(effective_edges, axis=1)  # shape (n_forecasters,)
-            
+
             for i in range(n_forecasters):
                 market_idx = best_market_idx[i]
                 # Number of contracts = money / price
                 bets[i, market_idx] = num_money_per_round / effective_implied_probs[i, market_idx]
-        
+
         # Step 4: Calculate effective outcomes (flip outcome if we chose NO)
-        effective_outcomes = np.where(choose_yes, 
-                                     outcome_vector[np.newaxis, :],  # broadcast outcome
-                                     1 - outcome_vector[np.newaxis, :])
+        effective_outcomes = np.where(
+            choose_yes,
+            outcome_vector[np.newaxis, :],  # broadcast outcome
+            1 - outcome_vector[np.newaxis, :],
+        )
 
         # Sanity Check: the sum of money spent should be equal to num_money_per_round
         assert np.allclose(np.sum(bets * effective_implied_probs, axis=1), num_money_per_round)
-        
+
         # Step 5: Calculate earnings
         # Earnings = sum over markets of (bets * effective_outcomes * num_money_per_round / num_money_per_round)
         # Since bets already incorporates the money amount, we don't multiply by num_money_per_round again
         # Each contract pays out 1 if it wins, 0 otherwise
         earnings = np.sum(bets * effective_outcomes, axis=1)
-        
+
         # Assign earnings to result dataframe
-        result_df.loc[group_indices, 'average_return'] = earnings
-    
+        result_df.loc[group_indices, "average_return"] = earnings
+
     if append:
         return result_df
     else:
         # Select only the required columns
-        result_df = result_df[['forecaster', 'event_ticker', 'submission_id', 'round', 'weight', 'average_return']]
+        result_df = result_df[
+            ["forecaster", "event_ticker", "submission_id", "round", "weight", "average_return"]
+        ]
         return result_df
 
 
-def compute_calibration_ece(forecasts: pd.DataFrame, num_bins: int = 10, 
-                           strategy: Literal["uniform", "quantile"] = "uniform",
-                           weight_event: bool = True, return_details: bool = False) -> pd.DataFrame:
+def compute_calibration_ece(
+    forecasts: pd.DataFrame,
+    num_bins: int = 10,
+    strategy: Literal["uniform", "quantile"] = "uniform",
+    weight_event: bool = True,
+    return_details: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, dict]:
     """
     Calculate the Expected Calibration Error (ECE) for each forecaster.
-    
+
     The ECE measures how well-calibrated a forecaster's probability predictions are.
     For perfectly calibrated predictions, when a forecaster predicts probability p,
     the actual outcome should occur with frequency p.
-    
+
     This function combines two types of weights:
     1. Prediction-level weight: from the 'weight' column (assigned by weight_fn in data loading)
     2. Market-level weight: either uniform (1.0) or inverse of number of markets per prediction
-    
+
     The final weight for each market probability is: prediction_weight * market_weight
-    
+
     Args:
         forecasts: DataFrame with columns (forecaster, event_ticker, round, prediction, outcome, weight)
         num_bins: Number of bins to use for discretization (default: 10)
@@ -345,21 +394,17 @@ def compute_calibration_ece(forecasts: pd.DataFrame, num_bins: int = 10,
     """
     # Prepare data structures to collect probabilities and outcomes for each forecaster
     forecaster_data = {}
-    
+
     for _, row in forecasts.iterrows():
-        forecaster = row['forecaster']
-        prediction_weight = row['weight']
-        prediction_probs = row['prediction']  # numpy array of probabilities
-        outcome_labels = row['market_outcome']  # numpy array of 0/1 outcomes
-        
+        forecaster = row["forecaster"]
+        prediction_weight = row["weight"]
+        prediction_probs = row["prediction"]  # numpy array of probabilities
+        outcome_labels = row["market_outcome"]  # numpy array of 0/1 outcomes
+
         # Initialize forecaster data if not already present
         if forecaster not in forecaster_data:
-            forecaster_data[forecaster] = {
-                'probs': [],
-                'labels': [],
-                'weights': []
-            }
-        
+            forecaster_data[forecaster] = {"probs": [], "labels": [], "weights": []}
+
         # Calculate market-level weight
         num_markets = len(prediction_probs)
         if weight_event:
@@ -368,160 +413,167 @@ def compute_calibration_ece(forecasts: pd.DataFrame, num_bins: int = 10,
         else:
             # Each market gets the full prediction weight
             market_weight = prediction_weight
-        
+
         # Add each market's probability and outcome with combined weight
-        forecaster_data[forecaster]['probs'].extend(prediction_probs)
-        forecaster_data[forecaster]['labels'].extend(outcome_labels)
-        forecaster_data[forecaster]['weights'].extend([market_weight] * num_markets)
-    
+        forecaster_data[forecaster]["probs"].extend(prediction_probs)
+        forecaster_data[forecaster]["labels"].extend(outcome_labels)
+        forecaster_data[forecaster]["weights"].extend([market_weight] * num_markets)
+
     # Calculate ECE for each forecaster
     ece_results = []
     ece_details = {}
-    
+
     for forecaster, data in forecaster_data.items():
-        probs = data['probs']
-        labels = data['labels']
-        weights = np.array(data['weights'])
-        
+        probs = data["probs"]
+        labels = data["labels"]
+        weights = np.array(data["weights"])
+
         # Normalize weights to sum to the number of samples (required by _bin_stats)
         if weights.sum() == 0:
             print(f"Warning: {forecaster} has no weights. Skipping ECE calculation...")
             continue
-        
+
         weights = weights * len(probs) / weights.sum()
-        
+
         # Calculate bin statistics using the helper function from the old API
         bin_centers, bin_widths, conf, acc, counts = _bin_stats(
             probs, labels, weights.tolist(), num_bins, strategy
         )
-        
+
         # Calculate ECE using the helper function from the old API
         ece_score = _calculate_ece(conf, acc, counts, len(probs))
-        
-        ece_results.append({
-            'forecaster': forecaster,
-            'ece_score': ece_score
-        })
+
+        ece_results.append({"forecaster": forecaster, "ece_score": ece_score})
 
         if return_details:
             ece_details[forecaster] = {
-                'ece_score': ece_score,
-                'bin_centers': bin_centers,
-                'bin_widths': bin_widths,
-                'conf': conf,
-                'acc': acc,
-                'counts': counts
+                "ece_score": ece_score,
+                "bin_centers": bin_centers,
+                "bin_widths": bin_widths,
+                "conf": conf,
+                "acc": acc,
+                "counts": counts,
             }
-    
+
     # Create result DataFrame
     result_df = pd.DataFrame(ece_results)
-    
+
     # Sort by ECE score (lower is better)
-    result_df = result_df.sort_values('ece_score').reset_index(drop=True)
-    
+    result_df = result_df.sort_values("ece_score").reset_index(drop=True)
+
     if return_details:
         return result_df, ece_details
     else:
         return result_df
 
 
-def compute_sharpe_ratio(average_return_results: pd.DataFrame, baseline_return: float = 1.0, 
-                         normalize_by_round: bool = False) -> pd.DataFrame:
+def compute_sharpe_ratio(
+    average_return_results: pd.DataFrame,
+    baseline_return: float = 1.0,
+    normalize_by_round: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, dict]:
     """
     Calculate the Sharpe ratio for each forecaster.
-    
-    The Sharpe ratio is defined as: E[R - R_b] / std(R - R_b), where R is the return 
+
+    The Sharpe ratio is defined as: E[R - R_b] / std(R - R_b), where R is the return
     and R_b is the baseline return (typically 1.0 for break-even).
-    
+
     Args:
         average_return_results: DataFrame with columns (forecaster, event_ticker, round, weight, average_return)
         baseline_return: The baseline return to subtract from the average return (default: 1.0 for break-even)
         normalize_by_round: If True, first average returns within each (forecaster, event_ticker) group,
                            then calculate Sharpe ratio across events. This prevents events with more
                            rounds from dominating the calculation. (default: False)
-    
+
     Returns:
         DataFrame with columns (forecaster, sharpe_ratio, mean_excess_return, std_excess_return)
         sorted by sharpe_ratio in descending order
     """
     df = average_return_results.copy()
-    
+
     if normalize_by_round:
         # Step 1: For each (forecaster, event_ticker), compute weighted average return across all rounds
         # This gives us one return value per event per forecaster
         def weighted_mean(group):
-            return np.average(group['average_return'], weights=group['weight'])
-        
-        event_returns = df.groupby(['forecaster', 'event_ticker']).apply(
-            weighted_mean, include_groups=False
-        ).reset_index(name='event_return')
-        
+            return np.average(group["average_return"], weights=group["weight"])
+
+        event_returns = (
+            df.groupby(["forecaster", "event_ticker"])
+            .apply(weighted_mean, include_groups=False)
+            .reset_index(name="event_return")  # type: ignore
+        )
+
         # Step 2: Calculate Sharpe ratio for each forecaster using event-level returns
         sharpe_results = []
-        for forecaster in event_returns['forecaster'].unique():
-            forecaster_data = event_returns[event_returns['forecaster'] == forecaster]
-            returns = forecaster_data['event_return'].values
-            
+        for forecaster in event_returns["forecaster"].unique():
+            forecaster_data = event_returns[event_returns["forecaster"] == forecaster]
+            returns = forecaster_data["event_return"].values
+
             # Calculate excess returns
             excess_returns = returns - baseline_return
-            
+
             # Calculate mean and std of excess returns
             mean_excess = np.mean(excess_returns)
             std_excess = np.std(excess_returns, ddof=1)  # Use sample std (ddof=1)
-            
+
             # Calculate Sharpe ratio (handle case where std is 0)
             if std_excess > 0:
                 sharpe = mean_excess / std_excess
             else:
                 sharpe = 0.0 if mean_excess == 0 else (np.inf if mean_excess > 0 else -np.inf)
-            
-            sharpe_results.append({
-                'forecaster': forecaster,
-                'sharpe_ratio': sharpe,
-                'mean_excess_return': mean_excess,
-                'std_excess_return': std_excess
-            })
+
+            sharpe_results.append(
+                {
+                    "forecaster": forecaster,
+                    "sharpe_ratio": sharpe,
+                    "mean_excess_return": mean_excess,
+                    "std_excess_return": std_excess,
+                }
+            )
     else:
         # Calculate Sharpe ratio directly from all (event, round) pairs
         sharpe_results = []
-        for forecaster in df['forecaster'].unique():
-            forecaster_data = df[df['forecaster'] == forecaster]
-            returns = forecaster_data['average_return'].values
-            
+        for forecaster in df["forecaster"].unique():
+            forecaster_data = df[df["forecaster"] == forecaster]
+            returns = forecaster_data["average_return"].values
+
             # Calculate excess returns
             excess_returns = returns - baseline_return
-            
+
             # Calculate mean and std of excess returns
             mean_excess = np.mean(excess_returns)
             std_excess = np.std(excess_returns, ddof=1)  # Use sample std (ddof=1)
-            
+
             # Calculate Sharpe ratio (handle case where std is 0)
             if std_excess > 0:
                 sharpe = mean_excess / std_excess
             else:
                 sharpe = 0.0 if mean_excess == 0 else (np.inf if mean_excess > 0 else -np.inf)
-            
-            sharpe_results.append({
-                'forecaster': forecaster,
-                'sharpe_ratio': sharpe,
-                'mean_excess_return': mean_excess,
-                'std_excess_return': std_excess
-            })
-    
+
+            sharpe_results.append(
+                {
+                    "forecaster": forecaster,
+                    "sharpe_ratio": sharpe,
+                    "mean_excess_return": mean_excess,
+                    "std_excess_return": std_excess,
+                }
+            )
+
     result_df = pd.DataFrame(sharpe_results)
-    
+
     # Sort by Sharpe ratio (descending - higher is better)
-    result_df = result_df.sort_values('sharpe_ratio', ascending=False).reset_index(drop=True)
-    
+    result_df = result_df.sort_values("sharpe_ratio", ascending=False).reset_index(drop=True)
+
     return result_df
-        
-    
+
 
 if __name__ == "__main__":
-    path = "data/raw/full_data"
+    import os
 
-    from prophet_hindsight.common.forecast import uniform_weighting, ProphetForecasts
-    
+    path = "data/raw/after_cleanup"
+
+    from prophet_hindsight.common.forecast import ProphetForecasts, uniform_weighting
+
     weight_fn = uniform_weighting()
     forecasts = ProphetForecasts.from_directory(path, weight_fn)
 
@@ -532,25 +584,16 @@ if __name__ == "__main__":
     # ece_results = compute_calibration_ece(forecasts.data)
 
     # avg_returns.to_csv(path + "/avg_returns.csv", index=False)
-    brier_score.to_csv(path + "/evals/brier_score_with_mb.csv", index=False)
+    save_path = path + "/evals/brier_score_with_mb.csv"
+    if not os.path.exists(os.path.dirname(save_path)):
+        os.makedirs(os.path.dirname(save_path))
+    brier_score.to_csv(save_path, index=False)
     # ece_results.to_csv(path + "/ece_results.csv", index=False)
 
     exit(0)
 
     # Test Brier score with Bootstrap CI
-    print("\n" + "=" * 50)
-    print("BRIER SCORE RANKINGS (with Bootstrap CI)")
-    print("=" * 50)
-    print(rank_forecasters_by_score(brier_score, normalize_by_round=True, bootstrap_config=None))
-
-    # Test Average Return with Bootstrap CI
-    print("\n" + "=" * 50)
-    print("AVERAGE RETURN RANKINGS (with Bootstrap CI)")
-    print("=" * 50)
-    print(rank_forecasters_by_score(avg_returns, normalize_by_round=True, bootstrap_config=None))
-    
-    # Test Calibration (ECE)
-    print("\n" + "=" * 50)
-    print("CALIBRATION (ECE) RANKINGS")
-    print("=" * 50)
-    print(rank_forecasters_by_score(ece_results))
+    # print("\n" + "=" * 50)
+    # print("BRIER SCORE RANKINGS (with Bootstrap CI)")
+    # print("=" * 50)
+    # print(rank_forecasters_by_score(brier_score, normalize_by_round=True, bootstrap_config=None))

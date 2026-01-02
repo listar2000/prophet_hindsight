@@ -22,3 +22,7 @@ torchtune/
 
 # Shell scripts
 *.sh
+
+# Cursor related (LLM)
+.cursor/
+PLAN.md

@@ -73,7 +73,7 @@ lr_scheduler:
 max_steps_per_epoch: null
 gradient_accumulation_steps: 2  # Use to increase effective batch size
 clip_grad_norm: 1.0
-compile: True  # torch.compile the model + loss, True increases speed + decreases memory
+compile: False  # torch.compile the model + loss, True increases speed + decreases memory
 optimizer_in_bwd: False  # True saves memory. Requires gradient_accumulation_steps=1
 
 # Training env
@@ -88,7 +88,7 @@ dtype: bf16
 
 # Logging
 metric_logger:
-  _component_: torchtune.utils.metric_logging.WandBLogger
+  _component_: torchtune.training.metric_logging.WandBLogger
   project: qwen3-8b-prophet-trainer
   group: full-sft
 log_every_n_steps: 1

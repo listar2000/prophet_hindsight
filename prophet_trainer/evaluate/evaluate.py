@@ -1,27 +1,18 @@
-import pandas as pd
-from datasets import load_dataset
 import json_repair
 import numpy as np
-
-
-DATASET_NAME = "listar2000/sports_augmented_sft_v2"
-SUBMISSION_FILE_PATH = "data/raw/full_data/submissions.csv"
+import pandas as pd
+from datasets import load_dataset
 
 
 def get_market_outcomes_for_eval_data(
-    dataset_name: str = None,
-    dataset_split: str = "test",
+    dataset_name: str,
+    dataset_split: str,
+    submission_file_path: str,
+    return_submission_ids: bool,
+    save_path: str,
     max_pred_single_event: int = 5,
-    submission_file_path: str = None,
-    return_submission_ids: bool = False,
-    save_path: str = None
-) -> pd.DataFrame: 
-    if dataset_name is None:
-        dataset_name = DATASET_NAME
-    if submission_file_path is None:
-        submission_file_path = SUBMISSION_FILE_PATH
-
-    dataset = load_dataset(dataset_name)[dataset_split]
+) -> pd.DataFrame:
+    dataset = load_dataset(dataset_name, split=dataset_split)
     df = dataset.to_pandas()
     # apply the same filtering logic as when we generated the evaluation prompts
     df = df.groupby("event_ticker").head(max_pred_single_event)
@@ -31,7 +22,11 @@ def get_market_outcomes_for_eval_data(
 
     submission_df = pd.read_csv(submission_file_path)
     # we merge on the `submission_id` column and take in the `market_outcome` column
-    merged_df = df.merge(submission_df[["submission_id", "market_outcome", "market_data"]], on="submission_id", how="left")
+    merged_df = df.merge(
+        submission_df[["submission_id", "market_outcome", "market_data"]],
+        on="submission_id",
+        how="left",
+    )
     print(f"Merged {len(merged_df)} rows")
 
     merged_df["market_outcome"] = merged_df["market_outcome"].apply(json_repair.loads)
@@ -50,20 +45,25 @@ def parse_raw_prediction(raw_prediction_str: str) -> dict:
     begin_str_idx = raw_prediction_str.find(begin_str)
     if begin_str_idx == -1:
         return None
-    prediction_str = raw_prediction_str[begin_str_idx + len(begin_str):]
+    prediction_str = raw_prediction_str[begin_str_idx + len(begin_str) :]
     end_str = "</probabilities>"
     end_str_idx = prediction_str.find(end_str)
     if end_str_idx == -1:
         prediction_str = prediction_str.strip()
     else:
         prediction_str = prediction_str[:end_str_idx].strip()
-    return json_repair.loads(prediction_str)["probabilities"]
 
-    
+    prediction_dict = json_repair.loads(prediction_str)
+    if "probabilities" in prediction_dict:
+        return prediction_dict["probabilities"]
+    else:
+        return prediction_dict
+
+
 def _calculate_brier_score(row: pd.Series) -> float:
     prediction = parse_raw_prediction(row["content"])
     if not prediction:
-        return float('nan')
+        return float("nan")
 
     if isinstance(row["market_outcome"], str):
         market_outcome = json_repair.loads(row["market_outcome"])
@@ -72,22 +72,28 @@ def _calculate_brier_score(row: pd.Series) -> float:
 
     try:
         market_names = [outcome for outcome in market_outcome.keys()]
-        prediction_scores = np.array([prediction[market_name] for market_name in market_names]).astype(float)
-        market_outcome_scores = np.array([market_outcome[market_name] for market_name in market_names]).astype(float)
+        prediction_scores = np.array(
+            [prediction[market_name] for market_name in market_names]
+        ).astype(float)
+        market_outcome_scores = np.array(
+            [market_outcome[market_name] for market_name in market_names]
+        ).astype(float)
         brier_score = np.mean((prediction_scores - market_outcome_scores) ** 2)
     except Exception as e:
         print(f"Error calculating brier score: {e}")
         print("prediction keys: ", prediction.keys())
         print("market outcome keys: ", market_outcome.keys())
-        return float('nan')
+        return float("nan")
     return brier_score
 
 
-def evaluate_with_outcomes_and_outputs(market_outcomes_df: pd.DataFrame, model_outputs_df: pd.DataFrame) -> pd.DataFrame:
+def evaluate_with_outcomes_and_outputs(
+    market_outcomes_df: pd.DataFrame, model_outputs_df: pd.DataFrame
+) -> pd.DataFrame:
     assert len(market_outcomes_df) == len(model_outputs_df)
     # directly do row by row concatenation
     concatenated_df = pd.concat([market_outcomes_df, model_outputs_df], axis=1)
-    concatenated_df["brier_score"] = concatenated_df.apply(_calculate_brier_score, axis=1)    
+    concatenated_df["brier_score"] = concatenated_df.apply(_calculate_brier_score, axis=1)
     # count how many valid brier scores we have
     valid_brier_scores = concatenated_df["brier_score"].notna().sum()
     print(f"Number of valid brier scores: {valid_brier_scores}, out of {len(concatenated_df)}")
@@ -100,8 +106,10 @@ def evaluate_with_outcomes_and_outputs(market_outcomes_df: pd.DataFrame, model_o
     # which means that we take the average brier score within each event_ticker group first, then take the average of the grouped scores
     grouped_brier_scores = concatenated_df.groupby("event_ticker")["brier_score"].mean()
     normalized_average_brier_score = grouped_brier_scores.mean()
-    print(f"Normalized average brier score (averaged by event_ticker): {normalized_average_brier_score}")
-    
+    print(
+        f"Normalized average brier score (averaged by event_ticker): {normalized_average_brier_score}"
+    )
+
     # Also print the number of unique events
     num_unique_events = concatenated_df["event_ticker"].nunique()
     print(f"Number of unique event_tickers: {num_unique_events}")
@@ -111,33 +119,46 @@ def evaluate_with_outcomes_and_outputs(market_outcomes_df: pd.DataFrame, model_o
 
 def _calculate_market_brier_score(row: pd.Series) -> np.ndarray:
     market_data = json_repair.loads(row["market_data"])
-    market_prediction = {market_name: market_data[market_name]["yes_ask"] / 100.0 for market_name in market_data.keys()}
+    market_prediction = {
+        market_name: market_data[market_name]["yes_ask"] / 100.0
+        for market_name in market_data.keys()
+    }
     if isinstance(row["market_outcome"], str):
         market_outcome = json_repair.loads(row["market_outcome"])
     else:
         market_outcome = row["market_outcome"]
-    
+
     try:
-        market_prediction_scores = np.array([market_prediction[market_name] for market_name in market_outcome.keys()]).astype(float)
-        market_outcome_scores = np.array([market_outcome[market_name] for market_name in market_outcome.keys()]).astype(float)
+        market_prediction_scores = np.array(
+            [market_prediction[market_name] for market_name in market_outcome.keys()]
+        ).astype(float)
+        market_outcome_scores = np.array(
+            [market_outcome[market_name] for market_name in market_outcome.keys()]
+        ).astype(float)
         brier_score = np.mean((market_prediction_scores - market_outcome_scores) ** 2)
     except Exception as e:
         print(f"Error calculating market brier score: {e}")
         print("market prediction keys: ", market_prediction.keys())
         print("market outcome keys: ", market_outcome.keys())
-        return float('nan')
+        return float("nan")
     return brier_score
 
 
 def evaluate_market_baseline(market_outcomes_df: pd.DataFrame) -> pd.DataFrame:
-    market_outcomes_df["brier_score"] = market_outcomes_df.apply(_calculate_market_brier_score, axis=1)
+    market_outcomes_df["brier_score"] = market_outcomes_df.apply(
+        _calculate_market_brier_score, axis=1
+    )
     valid_brier_scores = market_outcomes_df["brier_score"].notna().sum()
-    print(f"Number of valid market brier scores: {valid_brier_scores}, out of {len(market_outcomes_df)}")
+    print(
+        f"Number of valid market brier scores: {valid_brier_scores}, out of {len(market_outcomes_df)}"
+    )
     average_brier_score = market_outcomes_df["brier_score"].mean()
     print(f"Average market brier score: {average_brier_score}")
     grouped_brier_scores = market_outcomes_df.groupby("event_ticker")["brier_score"].mean()
     normalized_average_brier_score = grouped_brier_scores.mean()
-    print(f"Normalized average market brier score (averaged by event_ticker): {normalized_average_brier_score}")
+    print(
+        f"Normalized average market brier score (averaged by event_ticker): {normalized_average_brier_score}"
+    )
     num_unique_events = market_outcomes_df["event_ticker"].nunique()
     print(f"Number of unique event_tickers: {num_unique_events}")
     return market_outcomes_df
@@ -145,17 +166,18 @@ def evaluate_market_baseline(market_outcomes_df: pd.DataFrame) -> pd.DataFrame:
 
 if __name__ == "__main__":
     # df = get_market_outcomes_for_eval_data(
-    #     dataset_name=DATASET_NAME,
+    #     dataset_name="listar2000/sports_augmented_sft",
     #     dataset_split="test",
+    #     submission_file_path="data/raw/full_data/submissions.csv",
     #     max_pred_single_event=5,
     #     return_submission_ids=True,
     #     save_path="data/evals/market_outcomes.csv"
     # )
+
     # print(df.head())
     market_outcomes_df = pd.read_csv("data/evals/market_outcomes.csv")
-    model_outputs_df = pd.read_csv("data/evals/qwen3-8b.csv")
+    model_outputs_df = pd.read_csv("data/evals/qwen3-8b-sft.csv")
     evaluate_with_outcomes_and_outputs(
-        market_outcomes_df=market_outcomes_df,
-        model_outputs_df=model_outputs_df
+        market_outcomes_df=market_outcomes_df, model_outputs_df=model_outputs_df
     )
     evaluate_market_baseline(market_outcomes_df=market_outcomes_df)

@@ -1,0 +1,20 @@
+# Prompt configuration
+# Controls which prompts are used for each stage
+
+# Reasoning augmentation prompt
+reasoning_augment:
+  # Use built-in default or specify a custom YAML path
+  use_default: true
+  # Path to custom prompt YAML (only used if use_default is false)
+  custom_path: null
+
+# Event augmentation prompt  
+event_augment:
+  use_default: true
+  custom_path: null
+
+# Prediction prompt (for final SFT dataset)
+prediction:
+  use_default: true
+  custom_path: null
+

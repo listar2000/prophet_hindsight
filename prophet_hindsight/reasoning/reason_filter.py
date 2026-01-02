@@ -1,17 +1,30 @@
 """
 The different criteria function for filtering what is a good prediction versus a bad prediction.
 """
+
+import logging
+from typing import TYPE_CHECKING
+
 import json_repair
 import pandas as pd
 from sqlalchemy import text
+
 from prophet_hindsight.common.db import get_engine
-import logging
+
+if TYPE_CHECKING:
+    from sqlalchemy import Engine
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def top_absolute_score_criteria(results_df: pd.DataFrame, metric_col: str = 'brier_score', top_k: int = -1, top_p: float = 0.1, min_val: float = -1):
+def top_absolute_score_criteria(
+    results_df: pd.DataFrame,
+    metric_col: str = "brier_score",
+    top_k: int = -1,
+    top_p: float = 0.1,
+    min_val: float = -1,
+):
     """
     Group by submission_id and for each submission, select the best prediction by comparing among the LLM forecasters.
     We offer two options of selection (default to `top_p = 0.1`):
@@ -26,16 +39,16 @@ def top_absolute_score_criteria(results_df: pd.DataFrame, metric_col: str = 'bri
 
     if not use_top_k:
         assert top_p > 0 and top_p < 1, "top_p must be between 0 and 1"
-    
+
     ascending = metric_col == "brier_score"  # Brier score is lower is better
-    
+
     # group by submission_id and filter within each group
     filtered_groups = []
-    
-    for _, group in results_df.groupby('submission_id'):
+
+    for _, group in results_df.groupby("submission_id"):
         # Sort by metric (ascending for metrics where lower is better)
         sorted_group = group.sort_values(by=metric_col, ascending=ascending)
-        
+
         # Select top k or top p%
         if use_top_k:
             selected = sorted_group.head(top_k)
@@ -43,7 +56,7 @@ def top_absolute_score_criteria(results_df: pd.DataFrame, metric_col: str = 'bri
             # Calculate number of predictions to select (at least 1)
             num_to_select = max(1, int(len(sorted_group) * top_p))
             selected = sorted_group.head(num_to_select)
-        
+
         # Filter by minimum/maximum value if specified
         if min_val > 0:
             if ascending:
@@ -52,46 +65,52 @@ def top_absolute_score_criteria(results_df: pd.DataFrame, metric_col: str = 'bri
             else:
                 # For metrics where higher is better, filter by minimum required value
                 selected = selected[selected[metric_col] >= min_val]
-        
+
         # Only add if there are remaining predictions after filtering
         if len(selected) > 0:
             filtered_groups.append(selected)
-    
+
     # Combine all filtered groups
     if len(filtered_groups) == 0:
         logger.warning("No submissions met the criteria")
         # Return empty DataFrame with same columns as input
         return pd.DataFrame(columns=results_df.columns)
-    
+
     filtered_df = pd.concat(filtered_groups, ignore_index=True)
     return filtered_df
 
 
-def top_z_score_criteria(results_df: pd.DataFrame, metric_col: str = 'brier_score', min_z: float = 1.5, max_mean: float = -1, min_val: float = -1):
+def top_z_score_criteria(
+    results_df: pd.DataFrame,
+    metric_col: str = "brier_score",
+    min_z: float = 1.5,
+    max_mean: float = -1,
+    min_val: float = -1,
+):
     """
     For each submission i, compute the z-score for each forecaster j as the (score_ij - mean(score_i)) / std(score_i)
     We then select the submissions that have a z-score greater than `min_z` and (optionally) with absolute score greater than `min_val`.
     We also filter out the submission where everyone can do well, i.e. the mean score is greater than `max_mean`.
-    
+
     For metrics where lower is better (e.g., brier_score), we select z-scores < -min_z (i.e., scores significantly below the mean).
     For metrics where higher is better, we select z-scores > min_z (i.e., scores significantly above the mean).
-    
+
     Additionally, we can specify a minimum value for the metric to select.
     """
     ascending = metric_col == "brier_score"  # Brier score is lower is better
-    
+
     # group by submission_id and filter within each group
     filtered_groups = []
-    
-    for _, group in results_df.groupby('submission_id'):
+
+    for _, group in results_df.groupby("submission_id"):
         # Skip if group has less than 2 items (z-score needs variance)
         if len(group) < 2:
             continue
 
         # Skip if there exists any forecaster who predicts more than once within this submission
-        if len(group['forecaster'].unique()) != len(group):
+        if len(group["forecaster"].unique()) != len(group):
             continue
-            
+
         # Compute z-scores for this submission
         mean_score = group[metric_col].mean()
         std_score = group[metric_col].std()
@@ -101,22 +120,22 @@ def top_z_score_criteria(results_df: pd.DataFrame, metric_col: str = 'brier_scor
             unqualified_mean = mean_score < max_mean if ascending else mean_score > max_mean
         else:
             unqualified_mean = False
-        
+
         # Skip if std is 0 (all scores are the same)
         if std_score == 0 or unqualified_mean:
             continue
-            
+
         group = group.copy()
-        group['z_score'] = (group[metric_col] - mean_score) / std_score
-        
+        group["z_score"] = (group[metric_col] - mean_score) / std_score
+
         # Select based on z-score threshold
         if ascending:
             # For metrics where lower is better, select z-scores < -min_z
-            selected = group[group['z_score'] < -min_z]
+            selected = group[group["z_score"] < -min_z]
         else:
             # For metrics where higher is better, select z-scores > min_z
-            selected = group[group['z_score'] > min_z]
-        
+            selected = group[group["z_score"] > min_z]
+
         # Filter by minimum/maximum value if specified
         if min_val > 0:
             if ascending:
@@ -125,23 +144,29 @@ def top_z_score_criteria(results_df: pd.DataFrame, metric_col: str = 'brier_scor
             else:
                 # For metrics where higher is better, filter by minimum required value
                 selected = selected[selected[metric_col] >= min_val]
-        
+
         # Drop the z_score column before adding to results
         if len(selected) > 0:
-            selected = selected.drop(columns=['z_score'])
+            selected = selected.drop(columns=["z_score"])
             filtered_groups.append(selected)
-    
+
     # Combine all filtered groups
     if len(filtered_groups) == 0:
         logger.warning("No submissions met the criteria")
         # Return empty DataFrame with same columns as input
         return pd.DataFrame(columns=results_df.columns)
-    
+
     filtered_df = pd.concat(filtered_groups, ignore_index=True)
     return filtered_df
 
 
-def ambiguous_event_criteria(results_df: pd.DataFrame, metric_col: str = "brier_score", min_val: int = 0.25, max_val: int = 0.15, top_k: int = -1):
+def ambiguous_event_criteria(
+    results_df: pd.DataFrame,
+    metric_col: str = "brier_score",
+    min_val: float = 0.25,
+    max_val: float = 0.15,
+    top_k: int = -1,
+):
     """
     Filter by the following criteria:
     - We first group by `submission_id`. We only retain groups where all the predictions within it have Brier score > max_val.
@@ -154,37 +179,38 @@ def ambiguous_event_criteria(results_df: pd.DataFrame, metric_col: str = "brier_
         min_val, max_val = max_val, min_val
     else:
         assert min_val < max_val, "min_val must be less than max_val for descending metrics"
-    
+
     # Step 1: Group by submission_id and keep only groups where ALL predictions have metric > min_val
-    grouped = results_df.groupby('submission_id')
+    grouped = results_df.groupby("submission_id")
     valid_groups = grouped.filter(lambda x: (x[metric_col] > min_val).all())
-    
+
     # Step 2: Within those valid groups, keep only predictions with metric < max_val (and the top k predictions if provided)
     # Otherwise, we keep all predictions whose metric is < max_val.
     filtered_results = valid_groups[valid_groups[metric_col] < max_val]
-    
+
     if top_k > 0:
         # Sort by metric (ascending for metrics where lower is better) and take top k per group
-        filtered_results = (filtered_results
-                           .sort_values(metric_col, ascending=ascending)
-                           .groupby('submission_id', as_index=False)
-                           .head(top_k))
-    
+        filtered_results = (
+            filtered_results.sort_values(metric_col, ascending=ascending)
+            .groupby("submission_id", as_index=False)
+            .head(top_k)
+        )
+
     return filtered_results
 
 
 def _augment_results_with_sources(
     results_df: pd.DataFrame,
-    engine,
+    engine: Engine,
     submission_id_col: str = "submission_id",
-    filter_contributor_only: list[str] = None,
+    filter_contributor_only: list[str] | None = None,
 ) -> pd.DataFrame:
     """
     Augment each row of `results_df` with a JSON list of sources under column `sources`.
     The JSON is a Python list[dict] like [{"url": "...", "summary": "...", "contributor": "...", "title": "..."}, ...].
 
-    If `filter_contributor_only` is provided, our final dataframe 
-    
+    If `filter_contributor_only` is provided, our final dataframe
+
     Args:
         results_df: existing dataframe with a `submission_id` column.
         engine: SQLAlchemy engine connected to the Supabase Postgres.
@@ -199,8 +225,8 @@ def _augment_results_with_sources(
     assert len(ids) > 0, "No submission IDs to fetch sources for"
 
     # Using tuple binding which works better with SQLAlchemy
-    params = {f'id_{i}': str(id_val) for i, id_val in enumerate(ids)}
-    
+    params = {f"id_{i}": str(id_val) for i, id_val in enumerate(ids)}
+
     sql = f"""
     WITH ids AS (
       SELECT DISTINCT id::uuid AS submission_id
@@ -233,28 +259,28 @@ def _augment_results_with_sources(
 
     # If `filter_contributor_only` is provided, filter the src_df to only include submissions from these contributors
     if filter_contributor_only:
+
         def _contain_contributor(source_list: list) -> bool:
             # only need to look at the first contributor as we assume all contributors are the same
             if len(source_list) == 0:
                 return False
-            return source_list[0]['contributor'] in filter_contributor_only
-        
-        src_df = src_df[src_df['sources'].apply(_contain_contributor)]
+            return source_list[0]["contributor"] in filter_contributor_only
+
+        src_df = src_df[src_df["sources"].apply(_contain_contributor)]
 
     # Now remove the contributor key from each source in the sources list
-    src_df['sources'] = src_df['sources'].apply(lambda x: [{k: v for k, v in source.items() if k != 'contributor'} for source in x])
+    src_df["sources"] = src_df["sources"].apply(
+        lambda x: [{k: v for k, v in source.items() if k != "contributor"} for source in x]
+    )
 
     # Convert both columns to string for merging to avoid UUID type mismatch
-    src_df['submission_id'] = src_df['submission_id'].astype(str)
+    src_df["submission_id"] = src_df["submission_id"].astype(str)
     results_df_copy = results_df.copy()
     results_df_copy[submission_id_col] = results_df_copy[submission_id_col].astype(str)
 
     # Merge them back to your results_df; rows with the same submission_id all get the same sources array
     out = results_df_copy.merge(
-        src_df,
-        how="inner",
-        left_on=submission_id_col,
-        right_on="submission_id"
+        src_df, how="inner", left_on=submission_id_col, right_on="submission_id"
     )
 
     # For submission_ids with no sources, ensure empty list rather than NaN
@@ -271,7 +297,7 @@ def _augment_results_with_prediction_context(
     """
     Augment each row of `results_df` with the prediction JSON from the `prediction` table.
     Matches on both submission_id AND predictor_name to get the specific prediction for each forecaster.
-    
+
     Args:
         results_df: existing dataframe with submission_id and predictor columns.
         engine: SQLAlchemy engine connected to the Supabase Postgres.
@@ -292,15 +318,12 @@ def _augment_results_with_prediction_context(
     # Create parameters for each pair
     params = {}
     for i, (_, row) in enumerate(pairs.iterrows()):
-        params[f'sub_id_{i}'] = str(row[submission_id_col])
-        params[f'pred_name_{i}'] = str(row[predictor_col])
-    
+        params[f"sub_id_{i}"] = str(row[submission_id_col])
+        params[f"pred_name_{i}"] = str(row[predictor_col])
+
     # Build VALUES clause for the pairs
-    values_clause = ','.join([
-        f"(:sub_id_{i}, :pred_name_{i})" 
-        for i in range(len(pairs))
-    ])
-    
+    values_clause = ",".join([f"(:sub_id_{i}, :pred_name_{i})" for i in range(len(pairs))])
+
     sql = f"""
     WITH pairs AS (
       SELECT 
@@ -321,9 +344,9 @@ def _augment_results_with_prediction_context(
     pred_df = pd.read_sql(text(sql), engine, params=params)
 
     # Convert to string for merging to avoid type mismatch
-    pred_df['submission_id'] = pred_df['submission_id'].astype(str)
-    pred_df['predictor_name'] = pred_df['predictor_name'].astype(str)
-    
+    pred_df["submission_id"] = pred_df["submission_id"].astype(str)
+    pred_df["predictor_name"] = pred_df["predictor_name"].astype(str)
+
     results_df_copy = results_df.copy()
     results_df_copy[submission_id_col] = results_df_copy[submission_id_col].astype(str)
     results_df_copy[predictor_col] = results_df_copy[predictor_col].astype(str)
@@ -333,7 +356,7 @@ def _augment_results_with_prediction_context(
         pred_df,
         how="left",
         left_on=[submission_id_col, predictor_col],
-        right_on=["submission_id", "predictor_name"]
+        right_on=["submission_id", "predictor_name"],
     )
 
     # Clean up duplicate columns if names differ
@@ -344,11 +367,16 @@ def _augment_results_with_prediction_context(
 
     # For rows with no prediction, ensure empty dict rather than NaN
     out["prediction"] = out["prediction"].apply(lambda x: x if isinstance(x, dict) else {})
-    
+
     return out
 
 
-def _augment_results_with_event_details(results_df: pd.DataFrame, engine, event_ticker_col: str = "event_ticker", filter_category: str = None) -> pd.DataFrame:
+def _augment_results_with_event_details(
+    results_df: pd.DataFrame,
+    engine,
+    event_ticker_col: str = "event_ticker",
+    filter_category: list[str] | None = None,
+) -> pd.DataFrame:
     """
     Augment each row of `results_df` with the event title from the `event` table.
     Matches on event_ticker to get the specific event title.
@@ -363,23 +391,22 @@ def _augment_results_with_event_details(results_df: pd.DataFrame, engine, event_
     assert len(event_tickers) > 0, "No event tickers to fetch titles for"
 
     # Using tuple binding which works better with SQLAlchemy
-    params = {f'event_ticker_{i}': str(event_ticker) for i, event_ticker in enumerate(event_tickers)}
+    params = {
+        f"event_ticker_{i}": str(event_ticker) for i, event_ticker in enumerate(event_tickers)
+    }
     sql = f"""
     SELECT event_ticker, title, category, rules FROM event WHERE event_ticker IN ({','.join([f"(:event_ticker_{i})" for i in range(len(event_tickers))])})
     """
     event_df = pd.read_sql(text(sql), engine, params=params)
 
     # Convert to string for merging to avoid type mismatch
-    event_df['event_ticker'] = event_df['event_ticker'].astype(str)
+    event_df["event_ticker"] = event_df["event_ticker"].astype(str)
     results_df_copy = results_df.copy()
     results_df_copy[event_ticker_col] = results_df_copy[event_ticker_col].astype(str)
 
     # Merge on event_ticker
     out = results_df_copy.merge(
-        event_df,
-        how="left",
-        left_on=event_ticker_col,
-        right_on="event_ticker"
+        event_df, how="left", left_on=event_ticker_col, right_on="event_ticker"
     )
 
     # Clean up duplicate columns if names differ
@@ -397,11 +424,15 @@ def _augment_results_with_event_details(results_df: pd.DataFrame, engine, event_
     return out
 
 
-def _augment_results_with_market_data(results_df: pd.DataFrame, submission_df: pd.DataFrame | str, submission_id_col: str = "submission_id") -> pd.DataFrame:
+def _augment_results_with_market_data(
+    results_df: pd.DataFrame,
+    submission_df: pd.DataFrame | str,
+    submission_id_col: str = "submission_id",
+) -> pd.DataFrame:
     if isinstance(submission_df, str):
         # load it from the csv
         submission_df = pd.read_csv(submission_df)
-    
+
     # simply merge the `market_outcome` column into the results_df (merging by the submission_id key)
     if submission_id_col != "submission_id":
         results_df["submission_id"] = results_df[submission_id_col]
@@ -411,7 +442,7 @@ def _augment_results_with_market_data(results_df: pd.DataFrame, submission_df: p
         submission_df[["submission_id", "market_outcome", "market_data"]],
         how="left",
         left_on=submission_id_col,
-        right_on="submission_id"
+        right_on="submission_id",
     )
 
     out["market_outcome"] = out["market_outcome"].apply(json_repair.loads)
@@ -422,15 +453,24 @@ def _augment_results_with_market_data(results_df: pd.DataFrame, submission_df: p
     return out
 
 
-def augment_filtered_predictions(filtered_df: pd.DataFrame, engine: "Engine" = None, submission_df_path: str = None, \
-    filter_contributor_only: list[str] = None, filter_category: str = None) -> pd.DataFrame:
+def augment_filtered_predictions(
+    filtered_df: pd.DataFrame,
+    engine: Engine | None = None,
+    submission_df_path: str | None = None,
+    filter_contributor_only: list[str] | None = None,
+    filter_category: list[str] | None = None,
+) -> pd.DataFrame:
     if engine is None:
         engine = get_engine()
     # make sure market-baselines are removed at this point
     filtered_df = filtered_df[~filtered_df["forecaster"].str.startswith("market-baseline")]
-    augmented_df = _augment_results_with_sources(filtered_df, engine, filter_contributor_only=filter_contributor_only)
+    augmented_df = _augment_results_with_sources(
+        filtered_df, engine, filter_contributor_only=filter_contributor_only
+    )
     augmented_df = _augment_results_with_prediction_context(augmented_df, engine)
-    augmented_df = _augment_results_with_event_details(augmented_df, engine, filter_category=filter_category)
+    augmented_df = _augment_results_with_event_details(
+        augmented_df, engine, filter_category=filter_category
+    )
 
     if submission_df_path is not None:
         submission_df = pd.read_csv(submission_df_path)
@@ -440,23 +480,37 @@ def augment_filtered_predictions(filtered_df: pd.DataFrame, engine: "Engine" = N
 
 
 if __name__ == "__main__":
-    brier_df = pd.read_csv("data/raw/full_data/evals/brier_score_with_mb.csv")
+    import os
+
+    brier_df = pd.read_csv("data/raw/after_cleanup/evals/brier_score_with_mb.csv")
     old_len = len(brier_df)
 
     # filter out all the rows where the forecaster starts with "agent-"
-    brier_df = brier_df[~brier_df["forecaster"].str.startswith("agent-")]
+    # brier_df = brier_df[~brier_df["forecaster"].str.startswith("agent-")]
 
     print(f"Filtered out {old_len - len(brier_df)} rows")
-    # filtered_df = top_z_score_criteria(brier_df, metric_col="brier_score", min_z=1.5, min_val=0.15)
-    filtered_df = ambiguous_event_criteria(brier_df, metric_col="brier_score", min_val=0.2, max_val=0.15, top_k=5)
+    # filtered_df = top_z_score_criteria(brier_df, metric_col="brier_score", min_z=1.25, min_val=0.15)
+    filtered_df = ambiguous_event_criteria(
+        brier_df, metric_col="brier_score", min_val=0.2, max_val=0.15, top_k=5
+    )
 
-    augmented_df = augment_filtered_predictions(filtered_df, submission_df_path="data/raw/full_data/submissions.csv", \
-        filter_contributor_only=["o3", "gpt-4o"], filter_category=["Sports"])
+    augmented_df = augment_filtered_predictions(
+        filtered_df,
+        submission_df_path="data/raw/after_cleanup/submissions.csv",
+        filter_contributor_only=["o3", "gpt-4o"],
+        filter_category=["Sports"],
+    )
 
-    print(f"Final number of rows: {len(augmented_df)}\n" \
-          f"Number of unique forecasters: {len(augmented_df['forecaster'].unique())}\n" \
-          f"Number of unique submissions: {len(augmented_df['submission_id'].unique())}\n" \
-          f"Number of unique events: {len(augmented_df['event_ticker'].unique())}")
+    print(
+        f"Final number of rows: {len(augmented_df)}\n"
+        f"Number of unique forecasters: {len(augmented_df['forecaster'].unique())}\n"
+        f"Number of unique submissions: {len(augmented_df['submission_id'].unique())}\n"
+        f"Number of unique events: {len(augmented_df['event_ticker'].unique())}"
+    )
 
-    augmented_df.to_csv("data/raw/full_data/reasoning/hard_predictions.csv", index=False)
-    augmented_df.to_json("data/raw/full_data/reasoning/hard_predictions.json", orient="index", indent=2)
+    save_dir = "data/raw/after_cleanup/reasoning"
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    augmented_df.to_csv(save_dir + "/hard_predictions.csv", index=False)
+    augmented_df.to_json(save_dir + "/hard_predictions.json", orient="index", indent=2)

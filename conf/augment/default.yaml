@@ -1,0 +1,36 @@
+# Augmentation configuration
+# Controls how events and reasoning traces are augmented
+
+# Event title augmentation settings
+event:
+  # Whether to run event augmentation
+  enabled: true
+  # Model to use for event augmentation
+  model: "openai/gpt-5-mini"
+  # Whether to use OpenRouter API
+  use_openrouter: false
+  # Batch size for event augmentation
+  batch_size: 100
+  # Timeout per batch (seconds)
+  timeout: 180
+
+# Reasoning trace augmentation settings
+reasoning:
+  # Whether to run reasoning augmentation
+  enabled: true
+  # Models to use for reasoning augmentation
+  # Each trace will be augmented by one or more of these models
+  models:
+    - "openai/gpt-5-mini"
+  # Whether to use OpenRouter API
+  use_openrouter: false
+  # Batch size for processing
+  batch_size: 100
+  # Timeout per request (seconds)
+  timeout: 200
+  # Whether to randomly assign augmenters (vs. using all augmenters for all traces)
+  randomize: false
+  # Ratio of augmenters to assign per trace (only used if randomize=true)
+  # e.g., 0.5 means each trace is augmented by ~50% of the models
+  augment_ratio: 1.0
+

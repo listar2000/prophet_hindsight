@@ -11,6 +11,7 @@ dependencies = [
     "json-repair>=0.52.4",
     "openai==1.82.0",
     "pandas>=2.3.3",
+    "pre-commit>=4.5.1",
     "psycopg2-binary>=2.9.11",
     "sqlalchemy>=2.0.44",
     "supabase>=2.23.0",
@@ -27,3 +28,25 @@ training = [
     "transformers",
     "accelerate",
 ]
+
+[tool.ruff]
+# Set the maximum line length to 100.
+line-length = 100
+# Target Python 3.12+.
+target-version = "py312"
+
+[tool.ruff.lint]
+# Enable pycodestyle (`E`), Pyflakes (`F`), isort (`I`), and pyupgrade (`UP`) codes by default.
+select = ["E", "F", "I", "UP"]
+# Ignore line too long errors (E501) as the formatter handles this.
+ignore = ["E501"]
+
+[tool.ruff.format]
+# Use double quotes for strings.
+quote-style = "double"
+# Indent with spaces, rather than tabs.
+indent-style = "space"
+# Respect magic trailing commas.
+skip-magic-trailing-comma = false
+# Automatically detect the appropriate line ending.
+line-ending = "auto"

@@ -200,7 +200,7 @@ DEFAULT_BRIER_RESULT_COLUMNS = [
 
 def compute_brier_score(
     forecasts: pd.DataFrame, append: bool = False, additional_columns: list[str] = []
-) -> pd.DataFrame | None:
+) -> pd.DataFrame:
     """
     Calculate the Brier score for the forecasts. We will proceed by grouping by `event_ticker`, as each resulting group
     will have the same shape (i.e. number of markets), and we can manually construct a np matrix to accelerate the computation.

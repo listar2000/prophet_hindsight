@@ -36,21 +36,28 @@ class DataLoadingStage(PipelineStage):
 
         if data_config.predictions_path and data_config.submissions_path:
             # Load from files
-            self.logger.info(f"Loading predictions from {data_config.predictions_path}")
-            self.logger.info(f"Loading submissions from {data_config.submissions_path}")
-
-            state.predictions_df = pd.read_csv(data_config.predictions_path)
-            state.submissions_df = pd.read_csv(data_config.submissions_path)
+            self.logger.info(
+                f"Loading predictions from {data_config.predictions_path}"
+                + "\n and submissions from {data_config.submissions_path}"
+            )
+            predictions_df = pd.read_csv(data_config.predictions_path)
+            submissions_df = pd.read_csv(data_config.submissions_path)
         else:
             # Load from database
-            state = self._load_from_database(state)
+            predictions_df, submissions_df = self._load_df_from_database()
+
+        assert (
+            predictions_df is not None and submissions_df is not None
+        ), "Cannot proceed: predictions_df and submissions_df are required"
+        state.predictions_df = predictions_df
+        state.submissions_df = submissions_df
 
         self.logger.info(
-            f"Loaded {len(state.predictions_df)} predictions and {len(state.submissions_df)} submissions"
+            f"Loaded {len(predictions_df)} predictions and {len(submissions_df)} submissions"
         )
         return state
 
-    def _load_from_database(self, state: PipelineState) -> PipelineState:
+    def _load_df_from_database(self) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Load data from Supabase database."""
         from prophet_hindsight.common.db import (
             get_engine,
@@ -81,20 +88,11 @@ class DataLoadingStage(PipelineStage):
             filter_agent_only=data_config.filter_agent_only,
         )
 
-        # Process predictions
-        predictions_output, submissions_output = process_predictions(
-            predictions_df, submissions_df, markets_df, events_df
-        )
-
-        state.predictions_df = predictions_output
-        state.submissions_df = submissions_output
-
-        return state
+        # Process predictions and return
+        return process_predictions(predictions_df, submissions_df, markets_df, events_df)
 
     def _count_output_rows(self, state: PipelineState) -> int:
-        if state.predictions_df is not None:
-            return len(state.predictions_df)
-        return 0
+        return len(state.predictions_df) if state.predictions_df is not None else 0
 
     def _get_config_snapshot(self) -> dict:
         return {

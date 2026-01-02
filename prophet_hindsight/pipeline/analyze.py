@@ -37,7 +37,7 @@ class FilterSweepResult:
 
 def sweep_z_score_threshold(
     brier_df: pd.DataFrame,
-    min_z_values: list[float] = None,
+    min_z_values: list[float] | None = None,
     min_val: float = 0.15,
     max_mean: float = -1,
 ) -> FilterSweepResult:
@@ -87,7 +87,7 @@ def sweep_z_score_threshold(
 
 def sweep_ambiguous_thresholds(
     brier_df: pd.DataFrame,
-    min_val_values: list[float] = None,
+    min_val_values: list[float] | None = None,
     max_val: float = 0.15,
     top_k: int = 5,
 ) -> FilterSweepResult:
@@ -137,11 +137,11 @@ def sweep_ambiguous_thresholds(
 
 def estimate_total_traces(
     brier_df: pd.DataFrame,
-    z_score_config: dict,
-    ambiguous_config: dict,
+    z_score_config: dict | None = None,
+    ambiguous_config: dict | None = None,
     n_augmenters: int = 1,
     augment_ratio: float = 1.0,
-) -> dict[str, int]:
+) -> dict[str, float | int]:
     """
     Estimate the total number of traces that will be generated.
 
@@ -167,14 +167,14 @@ def estimate_total_traces(
     z_score_df = top_z_score_criteria(
         brier_df,
         metric_col="brier_score",
-        **z_score_config,
+        **(z_score_config or {}),
     )
 
     # Ambiguous filtering
     ambiguous_df = ambiguous_event_criteria(
         brier_df,
         metric_col="brier_score",
-        **ambiguous_config,
+        **(ambiguous_config or {}),
     )
 
     # Combined (deduplicated)
@@ -201,8 +201,8 @@ def estimate_total_traces(
 
 def print_filter_analysis(
     brier_df: pd.DataFrame,
-    z_score_config: dict = None,
-    ambiguous_config: dict = None,
+    z_score_config: dict | None = None,
+    ambiguous_config: dict | None = None,
 ) -> None:
     """
     Print a comprehensive analysis of filter configurations.

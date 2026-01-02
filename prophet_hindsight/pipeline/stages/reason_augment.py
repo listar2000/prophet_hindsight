@@ -15,6 +15,7 @@ import logging
 
 import numpy as np
 import pandas as pd
+from hydra.utils import instantiate
 
 from prophet_hindsight.common.prompts import (
     PromptTemplate,
@@ -22,6 +23,7 @@ from prophet_hindsight.common.prompts import (
 )
 from prophet_hindsight.pipeline.stages.base import PipelineStage
 from prophet_hindsight.pipeline.state import PipelineState
+from prophet_hindsight.reasoning.augment_strategies import AugmentationStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +61,7 @@ class ReasonAugmentStage(PipelineStage):
         if prompts_config.use_default:
             prompt = get_default_reasoning_augment_prompt()
         else:
-            prompt = PromptTemplate.from_yaml(prompts_config.custom_path)
+            prompt = PromptTemplate.from_yaml(prompts_config.custom_path)  # type: ignore[arg-type]
 
         # Record prompt in state for reproducibility
         state.record_prompt("reasoning_augment", prompt.to_dict())
@@ -68,28 +70,20 @@ class ReasonAugmentStage(PipelineStage):
         )
 
         # Get the predictions to augment
-        predictions_df = state.augmented_filtered_df.copy()
-        augmented_events_df = state.augmented_events_df.copy()
+        predictions_df = state.augmented_filtered_df.copy()  # type: ignore
+        augmented_events_df = state.augmented_events_df.copy()  # type: ignore
 
         self.logger.info(f"Augmenting reasoning for {len(predictions_df)} predictions")
 
         # Determine which models to use for each prediction
         models = augment_config.models
 
-        if augment_config.randomize:
-            # Assign models randomly to each prediction
-            predictions_with_models = self._assign_models_randomly(
-                predictions_df,
-                models,
-                augment_config.augment_ratio,
-                seed=self.config.run.seed,
-            )
-        else:
-            # Use all models for all predictions
-            predictions_with_models = [(predictions_df, model) for model in models]
+        # Instantiate the augmentation strategy and assign models to predictions
+        augment_strategy: AugmentationStrategy = instantiate(augment_config.strategy)  # type: ignore[arg-type]
+        predictions_with_models = augment_strategy.assign(models, predictions_df)
 
         # Process each model
-        for df, model in predictions_with_models:
+        for model, df in predictions_with_models.items():
             if len(df) == 0:
                 self.logger.info(f"No predictions assigned to {model}, skipping...")
                 continue
@@ -114,12 +108,14 @@ class ReasonAugmentStage(PipelineStage):
                 start_from_batch=0,
             )
 
-            state.augmented_reasoning_dfs[model] = augmented_df
+            if augmented_df is None or len(augmented_df) == 0:
+                self.logger.warning(f"No augmented reasoning traces for {model}, skipping...")
+                continue
 
+            state.augmented_reasoning_df_map[model] = augmented_df
             # Count successes
-            if "augmented_rationale" in augmented_df.columns:
-                success_count = augmented_df["augmented_rationale"].notna().sum()
-                self.logger.info(f"Successfully augmented {success_count}/{len(df)} with {model}")
+            success_count = augmented_df["augmented_rationale"].notna().sum()
+            self.logger.info(f"Successfully augmented {success_count}/{len(df)} with {model}")
 
         return state
 
@@ -169,7 +165,7 @@ class ReasonAugmentStage(PipelineStage):
         return 0
 
     def _count_output_rows(self, state: PipelineState) -> int:
-        return sum(len(df) for df in state.augmented_reasoning_dfs.values())
+        return sum(len(df) for df in state.augmented_reasoning_df_map.values())
 
     def _get_config_snapshot(self) -> dict:
         return {

@@ -29,6 +29,10 @@ class FilteringStage(PipelineStage):
         if state.brier_scores_df is None:
             self.logger.error("brier_scores_df is required but not present")
             return False
+        # make sure there's no market-baseline predictions in the brier_scores_df
+        if "market-baseline" in state.brier_scores_df["forecaster"].values:
+            self.logger.error("market-baseline predictions are not allowed in the brier_scores_df")
+            return False
         return True
 
     def run(self, state: PipelineState) -> PipelineState:
@@ -46,11 +50,7 @@ class FilteringStage(PipelineStage):
         filter_config = self.config.filter
         data_config = self.config.data
 
-        brier_df = state.brier_scores_df.copy()
-
-        # Remove market baseline predictions for filtering
-        brier_df = brier_df[~brier_df["forecaster"].str.startswith("market-baseline")]
-        self.logger.info(f"After removing market baseline: {len(brier_df)} predictions")
+        brier_df = state.brier_scores_df.copy()  # type: ignore
 
         filtered_dfs = []
 
@@ -107,15 +107,12 @@ class FilteringStage(PipelineStage):
             )
 
         state.combined_filtered_df = combined_df
-        self.logger.info(f"Combined filtered predictions: {len(combined_df)}")
+        self.logger.info(f"Combined filtered predictions: {len(combined_df)} rows")
 
         # Augment with sources, prediction context, event details, and market data
         self.logger.info("Augmenting filtered predictions with additional data...")
 
-        # Get database engine if needed
-        engine = None
-        if data_config.db_url:
-            engine = get_engine(data_config.db_url)
+        engine = get_engine(data_config.db_url)
 
         # Get submissions path for market data
         submissions_path = data_config.submissions_path
@@ -137,7 +134,7 @@ class FilteringStage(PipelineStage):
         )
 
         state.augmented_filtered_df = augmented_df
-        self.logger.info(f"Augmented filtered predictions: {len(augmented_df)}")
+        self.logger.info(f"Augmented filtered predictions: {len(augmented_df)} rows")
 
         return state
 

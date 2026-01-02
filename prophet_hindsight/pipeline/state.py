@@ -85,7 +85,7 @@ class PipelineState:
 
     # Stage 5: Reasoning Augmentation
     # Maps augmenter model name -> augmented reasoning DataFrame
-    augmented_reasoning_dfs: dict[str, pd.DataFrame] = field(default_factory=dict)
+    augmented_reasoning_df_map: dict[str, pd.DataFrame] = field(default_factory=dict)
 
     # Stage 6: Dataset Creation
     # Note: HuggingFace DatasetDict is not stored here, only the path
@@ -137,7 +137,7 @@ class PipelineState:
             "current_stage": self.current_stage,
             "stage_history": [s.to_dict() for s in self.stage_history],
             "final_dataset_path": self.final_dataset_path,
-            "augmented_reasoning_models": list(self.augmented_reasoning_dfs.keys()),
+            "augmented_reasoning_models": list(self.augmented_reasoning_df_map.keys()),
             "prompts_used": self.prompts_used,
         }
         with open(output_dir / "metadata.json", "w") as f:
@@ -166,7 +166,7 @@ class PipelineState:
                 self._save_dataframe(df, output_dir / f"{attr}.{format}", format)
 
         # Save augmented reasoning DataFrames
-        for model_name, df in self.augmented_reasoning_dfs.items():
+        for model_name, df in self.augmented_reasoning_df_map.items():
             safe_name = model_name.replace("/", "_").replace(":", "_")
             self._save_dataframe(df, output_dir / f"reasoning_{safe_name}.{format}", format)
 
@@ -223,7 +223,7 @@ class PipelineState:
             safe_name = model_name.replace("/", "_").replace(":", "_")
             path = output_dir / f"reasoning_{safe_name}.{format}"
             if path.exists():
-                state.augmented_reasoning_dfs[model_name] = cls._load_dataframe(path, format)
+                state.augmented_reasoning_df_map[model_name] = cls._load_dataframe(path, format)
 
         logger.info(f"Loaded pipeline state from {output_dir}")
         return state
@@ -264,10 +264,10 @@ class PipelineState:
             lines.append(f"  - Filtered Predictions: {len(self.combined_filtered_df)} rows")
         if self.augmented_events_df is not None:
             lines.append(f"  - Augmented Events: {len(self.augmented_events_df)} rows")
-        if self.augmented_reasoning_dfs:
-            total = sum(len(df) for df in self.augmented_reasoning_dfs.values())
+        if self.augmented_reasoning_df_map:
+            total = sum(len(df) for df in self.augmented_reasoning_df_map.values())
             lines.append(
-                f"  - Augmented Reasonings: {total} rows across {len(self.augmented_reasoning_dfs)} models"
+                f"  - Augmented Reasonings: {total} rows across {len(self.augmented_reasoning_df_map)} models"
             )
 
         if self.stage_history:

@@ -22,15 +22,18 @@ reasoning:
   # Each trace will be augmented by one or more of these models
   models:
     - "openai/gpt-5-mini"
+    - "google/gemini-3-flash-preview"
   # Whether to use OpenRouter API
-  use_openrouter: false
+  use_openrouter: true
   # Batch size for processing
   batch_size: 100
   # Timeout per request (seconds)
   timeout: 200
-  # Whether to randomly assign augmenters (vs. using all augmenters for all traces)
-  randomize: false
-  # Ratio of augmenters to assign per trace (only used if randomize=true)
-  # e.g., 0.5 means each trace is augmented by ~50% of the models
-  augment_ratio: 1.0
+  
+  # Used for instantiating the augmentation strategy class
+  strategy:
+    _target_: prophet_hindsight.reasoning.augment_strategies.UniformRandomStrategy
+    overlap: true
+    fraction: 0.6
+    seed: 2025
 

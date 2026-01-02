@@ -3,6 +3,7 @@ import logging
 
 import json_repair
 import pandas as pd
+import tqdm
 from pydantic import BaseModel
 
 from prophet_hindsight.common.judge import LLMJudge, MessageBuilder
@@ -195,7 +196,7 @@ def batch_augment_reasoning(
     total_batches = (total_size + batch_size - 1) // batch_size  # Ceiling division
 
     current_df = None
-    for i in range(total_batches):
+    for i in tqdm.trange(total_batches, desc="Augmenting reasoning batches"):
         if i < start_from_batch:
             continue
         logger.info(f"Processing batch {i+1} of {total_batches}")

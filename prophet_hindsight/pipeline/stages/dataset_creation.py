@@ -23,8 +23,8 @@ class DatasetCreationStage(PipelineStage):
 
     def validate_inputs(self, state: PipelineState) -> bool:
         """Validate that augmented reasoning traces are available."""
-        if not state.augmented_reasoning_dfs:
-            self.logger.error("augmented_reasoning_dfs is required but empty")
+        if not state.augmented_reasoning_df_map:
+            self.logger.error("augmented_reasoning_df_map is required but empty")
             return False
         if state.augmented_filtered_df is None:
             self.logger.error("augmented_filtered_df is required but not present")
@@ -48,7 +48,7 @@ class DatasetCreationStage(PipelineStage):
 
         # Combine all augmented reasoning DataFrames
         all_rationales = []
-        for model, df in state.augmented_reasoning_dfs.items():
+        for model, df in state.augmented_reasoning_df_map.items():
             if df is not None and len(df) > 0:
                 all_rationales.append(df)
 
@@ -156,7 +156,7 @@ class DatasetCreationStage(PipelineStage):
         return state
 
     def _count_input_rows(self, state: PipelineState) -> int:
-        return sum(len(df) for df in state.augmented_reasoning_dfs.values())
+        return sum(len(df) for df in state.augmented_reasoning_df_map.values())
 
     def _count_output_rows(self, state: PipelineState) -> int:
         # TODO(listar2000): We don't store the dataset in state, so we can't count output rows easily

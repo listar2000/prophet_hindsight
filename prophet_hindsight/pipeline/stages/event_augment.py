@@ -44,7 +44,7 @@ class EventAugmentStage(PipelineStage):
         if not augment_config.enabled:
             self.logger.info("Event augmentation disabled, skipping...")
             # Create a placeholder DataFrame with original titles
-            events_df = state.augmented_filtered_df[["event_ticker", "title"]].drop_duplicates()
+            events_df = state.augmented_filtered_df[["event_ticker", "title"]].drop_duplicates()  # type: ignore[index]
             events_df["augmented_title"] = events_df["title"]
             state.augmented_events_df = events_df
             return state
@@ -53,7 +53,7 @@ class EventAugmentStage(PipelineStage):
         if prompts_config.use_default:
             prompt = get_default_event_augment_prompt()
         else:
-            prompt = PromptTemplate.from_yaml(prompts_config.custom_path)
+            prompt = PromptTemplate.from_yaml(prompts_config.custom_path)  # type: ignore[arg-type]
 
         # Record prompt in state for reproducibility
         state.record_prompt("event_augment", prompt.to_dict())
@@ -62,7 +62,7 @@ class EventAugmentStage(PipelineStage):
         )
 
         # Get unique event tickers
-        event_tickers = state.augmented_filtered_df["event_ticker"].unique().tolist()
+        event_tickers = state.augmented_filtered_df["event_ticker"].unique().tolist()  # type: ignore[index]
         self.logger.info(f"Augmenting titles for {len(event_tickers)} unique events")
 
         # Create LLM judge
@@ -85,7 +85,8 @@ class EventAugmentStage(PipelineStage):
         # Convert results to DataFrame
         # Results are list of (event_ticker, raw_title, augmented_title)
         augmented_events_df = pd.DataFrame(
-            results, columns=["event_ticker", "title", "augmented_title"]
+            results,
+            columns=["event_ticker", "title", "augmented_title"],  # type: ignore[index]
         )
 
         # Count successes and failures

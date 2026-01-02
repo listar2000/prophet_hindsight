@@ -53,7 +53,7 @@ class EvaluationStage(PipelineStage):
 
         # Compute Brier scores
         self.logger.info("Computing Brier scores...")
-        state.brier_scores_df = compute_brier_score(merged_df, append=False)
+        state.brier_scores_df = compute_brier_score(merged_df, append=True)
 
         self.logger.info(f"Obtained Brier scores for {len(state.brier_scores_df)} predictions")
         return state

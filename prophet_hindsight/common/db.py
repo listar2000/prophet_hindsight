@@ -30,7 +30,8 @@ FILTER_AGENT_ONLY = True
 _ENGINE_REGISTRY = {}
 
 
-def get_engine(db_url: str = DATABASE_URL) -> Engine:
+def get_engine(db_url: str | None = None) -> Engine:
+    db_url = db_url or DATABASE_URL
     global _ENGINE_REGISTRY
     if db_url not in _ENGINE_REGISTRY:
         _ENGINE_REGISTRY[db_url] = create_engine(db_url)

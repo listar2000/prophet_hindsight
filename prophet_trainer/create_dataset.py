@@ -148,7 +148,7 @@ def pd_train_test_split(
     test_min_size = int(len(df) * test_size)
 
     # step 1: group by and rank the event_tickers and (optionally) rank by row size if no seed is provided
-    event_ticker_sizes = df.groupby("event_ticker").size().reset_index(name="count")
+    event_ticker_sizes = df.groupby("event_ticker").size().reset_index(name="count")  # type: ignore
 
     if seed != -1:
         # Random selection: shuffle event_tickers

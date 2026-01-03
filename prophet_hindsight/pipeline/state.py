@@ -163,7 +163,13 @@ class PipelineState:
         for attr in df_attrs:
             df = getattr(self, attr)
             if df is not None:
-                self._save_dataframe(df, output_dir / f"{attr}.{format}", format)
+                logger.info(f"Saving dataframe {attr}")
+                try:
+                    self._save_dataframe(df, output_dir / f"{attr}.{format}", format)
+                except Exception as e:
+                    logger.error(f"Error saving dataframe {attr}")
+                    logger.info(f"Columns of dataframe {attr}: {df.columns}")
+                    raise e
 
         # Save augmented reasoning DataFrames
         for model_name, df in self.augmented_reasoning_df_map.items():

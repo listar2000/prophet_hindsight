@@ -154,7 +154,7 @@ def augment_reasoning(
 
     if save_path is not None:
         augmented_reasonings_df.to_csv(save_path, index=False)
-        augmented_reasonings_df.to_json(save_path.replace("csv", "json"), orient="index", indent=2)
+        # augmented_reasonings_df.to_json(save_path.replace("csv", "json"), orient="index", indent=2)
 
     return augmented_reasonings_df
 
@@ -223,23 +223,14 @@ def batch_augment_reasoning(
         # Save intermediate results after each batch
         if save_path is not None:
             current_df.to_csv(save_path, index=False)
-            try:
-                # Reset indices for proper JSON serialization
-                current_df.index = pd.RangeIndex(start=0, stop=len(current_df))
-                current_df.to_json(save_path.replace("csv", "json"), orient="index", indent=2)
-            except Exception as e:
-                logger.error(f"Error saving json for batch {i+1} of {total_batches}: {e}")
+            # try:
+            #     # Reset indices for proper JSON serialization
+            #     current_df.index = pd.RangeIndex(start=0, stop=len(current_df))
+            #     current_df.to_json(save_path.replace("csv", "json"), orient="index", indent=2)
+            # except Exception as e:
+            #     logger.error(f"Error saving json for batch {i+1} of {total_batches}: {e}")
 
     return current_df
-
-
-def csv_to_json_helper(csv_path: str, json_path: str | None = None) -> None:
-    if not json_path:
-        json_path = csv_path.replace("csv", "json")
-
-    df = pd.read_csv(csv_path)
-    df["augmented_rationale"] = df["augmented_rationale"].astype(str).apply(json_repair.loads)
-    df.to_json(json_path, orient="index", indent=2)
 
 
 if __name__ == "__main__":

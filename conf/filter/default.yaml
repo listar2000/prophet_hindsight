@@ -25,7 +25,7 @@ ambiguous:
   # Maximum score threshold - selected predictions must be better than this
   max_val: 0.15
   # Number of top predictions to keep per submission (-1 = all that meet criteria)
-  top_k: 5
+  top_k: 3
 
 # Absolute score filtering criteria (alternative to z-score)
 absolute:

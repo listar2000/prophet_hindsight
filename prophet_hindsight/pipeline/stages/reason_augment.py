@@ -13,8 +13,6 @@ Supports:
 
 import logging
 
-import numpy as np
-import pandas as pd
 from hydra.utils import instantiate
 
 from prophet_hindsight.common.prompts import (
@@ -119,46 +117,6 @@ class ReasonAugmentStage(PipelineStage):
 
         return state
 
-    def _assign_models_randomly(
-        self,
-        predictions_df: pd.DataFrame,
-        models: list[str],
-        augment_ratio: float,
-        seed: int,
-    ) -> list[tuple]:
-        """
-        Randomly assign models to predictions.
-
-        Each prediction is assigned to approximately augment_ratio * len(models) models.
-
-        Returns:
-            List of (DataFrame subset, model name) tuples
-        """
-        np.random.seed(seed)
-
-        n_predictions = len(predictions_df)
-
-        # For each prediction, randomly decide which models to use
-        # Each model has augment_ratio probability of being selected
-        assignments = {model: [] for model in models}
-
-        for idx in range(n_predictions):
-            for model in models:
-                if np.random.random() < augment_ratio:
-                    assignments[model].append(idx)
-
-        # Create DataFrames for each model
-        result = []
-        for model in models:
-            indices = assignments[model]
-            if indices:
-                df_subset = predictions_df.iloc[indices].copy()
-                result.append((df_subset, model))
-            else:
-                result.append((pd.DataFrame(), model))
-
-        return result
-
     def _count_input_rows(self, state: PipelineState) -> int:
         if state.augmented_filtered_df is not None:
             return len(state.augmented_filtered_df)
@@ -171,7 +129,6 @@ class ReasonAugmentStage(PipelineStage):
         return {
             "enabled": self.config.augment.reasoning.enabled,
             "models": self.config.augment.reasoning.models,
-            "randomize": self.config.augment.reasoning.randomize,
-            "augment_ratio": self.config.augment.reasoning.augment_ratio,
             "batch_size": self.config.augment.reasoning.batch_size,
+            "strategy": self.config.augment.reasoning.strategy,
         }

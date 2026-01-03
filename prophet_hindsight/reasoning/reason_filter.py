@@ -2,17 +2,14 @@
 The different criteria function for filtering what is a good prediction versus a bad prediction.
 """
 
+import json
 import logging
-from typing import TYPE_CHECKING
 
 import json_repair
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import Engine, text
 
 from prophet_hindsight.common.db import get_engine
-
-if TYPE_CHECKING:
-    from sqlalchemy import Engine
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -337,7 +334,8 @@ def _augment_results_with_prediction_context(
       p.prediction
     FROM prediction p
     JOIN pairs pr ON pr.submission_id = p.submission_id 
-                  AND pr.predictor_name = p.predictor_name;
+                  AND pr.predictor_name = p.predictor_name
+    WHERE p.prediction IS NOT NULL;
     """
 
     # Fetch predictions
@@ -365,9 +363,12 @@ def _augment_results_with_prediction_context(
     if predictor_col != "predictor_name":
         out.drop(columns=["predictor_name"], inplace=True)
 
-    # For rows with no prediction, ensure empty dict rather than NaN
-    out["prediction"] = out["prediction"].apply(lambda x: x if isinstance(x, dict) else {})
-
+    # 1. Drop all rows where the "prediction" column is not an instance of dict
+    # 2. Turn the dictionary into a string by Json dumps
+    out = out[out["prediction"].apply(lambda x: isinstance(x, dict) or isinstance(x, str))]
+    out["prediction"] = out["prediction"].apply(
+        lambda x: json.dumps(x) if isinstance(x, dict) else x
+    )
     return out
 
 
@@ -462,8 +463,7 @@ def augment_filtered_predictions(
 ) -> pd.DataFrame:
     if engine is None:
         engine = get_engine()
-    # make sure market-baselines are removed at this point
-    filtered_df = filtered_df[~filtered_df["forecaster"].str.startswith("market-baseline")]
+
     augmented_df = _augment_results_with_sources(
         filtered_df, engine, filter_contributor_only=filter_contributor_only
     )
@@ -471,11 +471,9 @@ def augment_filtered_predictions(
     augmented_df = _augment_results_with_event_details(
         augmented_df, engine, filter_category=filter_category
     )
-
     if submission_df_path is not None:
         submission_df = pd.read_csv(submission_df_path)
         augmented_df = _augment_results_with_market_data(augmented_df, submission_df)
-
     return augmented_df
 
 
@@ -487,12 +485,12 @@ if __name__ == "__main__":
 
     # filter out all the rows where the forecaster starts with "agent-"
     # brier_df = brier_df[~brier_df["forecaster"].str.startswith("agent-")]
-
-    print(f"Filtered out {old_len - len(brier_df)} rows")
     # filtered_df = top_z_score_criteria(brier_df, metric_col="brier_score", min_z=1.25, min_val=0.15)
     filtered_df = ambiguous_event_criteria(
         brier_df, metric_col="brier_score", min_val=0.2, max_val=0.15, top_k=5
     )
+
+    print(f"Filtered out {old_len - len(filtered_df)} rows")
 
     augmented_df = augment_filtered_predictions(
         filtered_df,

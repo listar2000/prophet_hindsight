@@ -19,6 +19,8 @@ run:
   # Resume from a specific stage (null = start from beginning)
   # Options: data_loading, evaluation, filtering, event_augment, reason_augment, dataset_creation
   resume_from: null
+  # Create a new run after resuming from a checkpoint. Only effective if resume_from is not null.
+  new_run_name: null
   # End at a specific stage (null = run all stages)
   end_at: null
   # Skip specific stages (list of stage names)

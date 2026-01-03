@@ -6,6 +6,7 @@ Uses Pydantic for type validation and OmegaConf/Hydra for configuration manageme
 
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import cached_property
 from typing import Literal
 
 
@@ -31,6 +32,12 @@ class StageType(str, Enum):
             cls.DATASET_CREATION,
         ]
 
+    @classmethod
+    @cached_property
+    def get_stage_orders(cls) -> dict["StageType", int]:
+        stages = cls.all_stages()
+        return {stage: i for i, stage in enumerate(stages)}
+
 
 @dataclass
 class RunConfig:
@@ -39,6 +46,7 @@ class RunConfig:
     name: str | None = None
     seed: int = 42
     resume_from: str | None = None
+    new_run_name: str | None = None
     end_at: str | None = None
     skip_stages: list[str] = field(default_factory=list)
 
@@ -117,8 +125,7 @@ class ReasoningAugmentConfig:
     use_openrouter: bool = False
     batch_size: int = 100
     timeout: int = 200
-    randomize: bool = False
-    augment_ratio: float = 1.0
+    strategy: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -239,7 +246,7 @@ class PipelineConfig:
     def _parse_prompts_config(cls, prompts_cfg: dict) -> PromptsConfig:
         """Parse prompts configuration from dict."""
 
-        def parse_prompt_config(cfg: dict) -> PromptConfig:
+        def parse_prompt_config(cfg: dict | None) -> PromptConfig:
             if cfg is None:
                 return PromptConfig()
             return PromptConfig(

@@ -15,6 +15,7 @@ Usage:
     python -m prophet_hindsight.pipeline.run_pipeline \\
         run.resume_from=reason_augment \\
         run.name=existing_run
+        run.new_run_name=existing_run_2
     
     # Run only specific stages
     python -m prophet_hindsight.pipeline.run_pipeline \\
@@ -32,7 +33,7 @@ from prophet_hindsight.pipeline.runner import PipelineRunner
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(version_base=None, config_path="../../../conf", config_name="config")
+@hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def main(cfg: DictConfig) -> None:
     """
     Main entry point for the pipeline.
@@ -42,7 +43,9 @@ def main(cfg: DictConfig) -> None:
     """
     # Print configuration
     logger.info("Pipeline Configuration:")
-    logger.info(OmegaConf.to_yaml(cfg))
+
+    cfg_str = OmegaConf.to_yaml(cfg)
+    logger.info(cfg_str)
 
     # Convert Hydra config to PipelineConfig
     config = PipelineConfig.from_hydra(cfg)

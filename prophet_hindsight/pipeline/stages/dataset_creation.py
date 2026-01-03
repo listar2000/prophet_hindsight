@@ -57,14 +57,18 @@ class DatasetCreationStage(PipelineStage):
             raise ValueError("No augmented reasoning data available")
 
         combined_rationale_df = pd.concat(all_rationales, ignore_index=True)
-        self.logger.info(f"Combined {len(combined_rationale_df)} augmented reasoning traces")
+        self.logger.info(
+            f"Combined {len(combined_rationale_df)} augmented reasoning traces from {len(state.augmented_reasoning_df_map)} models"
+        )
 
         # Filter and replace rationale (remove leakage, fix wording)
         combined_rationale_df = filter_and_replace_rationale(combined_rationale_df)
-        self.logger.info(f"After filtering: {len(combined_rationale_df)} traces")
+        self.logger.info(
+            f"After removing leakage and replacing: {len(combined_rationale_df)} traces"
+        )
 
         # Get prediction data
-        prediction_df = state.augmented_filtered_df.copy()
+        prediction_df = state.augmented_filtered_df.copy()  # type: ignore
 
         # Deduplicate prediction data
         prediction_df = prediction_df.drop_duplicates(
@@ -101,7 +105,9 @@ class DatasetCreationStage(PipelineStage):
             test_size=dataset_config.test_size,
             seed=self.config.run.seed,
         )
-        self.logger.info(f"Split: {len(train_df)} train, {len(test_df)} test")
+        self.logger.info(
+            f"Split: {len(train_df)} train, {len(test_df)} test with seed {self.config.run.seed}"
+        )
 
         # Convert to message format
         train_messages = (
@@ -151,7 +157,9 @@ class DatasetCreationStage(PipelineStage):
                     dataset_config.repo_id,
                     private=dataset_config.private,
                 )
-                self.logger.info("Successfully pushed to HuggingFace Hub")
+                self.logger.info(
+                    f"Successfully pushed to HuggingFace Hub, repo_id: {dataset_config.repo_id}"
+                )
 
         return state
 
@@ -159,7 +167,6 @@ class DatasetCreationStage(PipelineStage):
         return sum(len(df) for df in state.augmented_reasoning_df_map.values())
 
     def _count_output_rows(self, state: PipelineState) -> int:
-        # TODO(listar2000): We don't store the dataset in state, so we can't count output rows easily
         return 0
 
     def _get_config_snapshot(self) -> dict:

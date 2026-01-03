@@ -68,15 +68,15 @@ class PipelineRunner:
         )
 
         # Console handler
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        console_handler.setFormatter(logging.Formatter("%(levelname)s - %(message)s"))
+        # console_handler = logging.StreamHandler()
+        # console_handler.setLevel(logging.INFO)
+        # console_handler.setFormatter(logging.Formatter("%(levelname)s - %(message)s"))
 
         # Configure root logger for pipeline
         pipeline_logger = logging.getLogger("prophet_hindsight.pipeline")
         pipeline_logger.setLevel(logging.DEBUG)
         pipeline_logger.addHandler(file_handler)
-        pipeline_logger.addHandler(console_handler)
+        # pipeline_logger.addHandler(console_handler)
 
     def run(self, state: PipelineState | None = None) -> PipelineState:
         """
@@ -94,9 +94,23 @@ class PipelineRunner:
         # Initialize or load state
         if state is None:
             if run_config.resume_from:
+                logger.info(f"Resuming from checkpoint: {run_config.resume_from}")
                 # Resume from checkpoint
                 state = self._load_checkpoint(run_dir)
-                logger.info(f"Resuming from checkpoint: {state.get_last_completed_stage()}")
+                # If a new run name is provided, create a new run
+                if run_config.new_run_name:
+                    state.run_name = run_config.new_run_name
+                    # make sure the new run folder does not exist -- so we don't accidentally overwrite it
+                    if Path(self.config.get_run_dir()).exists():
+                        raise FileExistsError(
+                            f"New run folder already exists: {self.config.get_run_dir()}"
+                        )
+                    logger.info(f"Creating new run: {state.run_name}")
+                else:
+                    logger.warning(
+                        f"No new run name provided, using existing run: {state.run_name}. \
+                        This might overwrite previous run results"
+                    )
             else:
                 # Start fresh
                 state = PipelineState(

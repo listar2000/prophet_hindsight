@@ -6,11 +6,11 @@ db_url: ${oc.env:SUPABASE_DB_URL,null}
 
 # Time window for filtering predictions
 # Format: "YYYY-MM-DD HH:MM:SS"
-filter_time_before: "2025-10-23 00:00:00"
-filter_time_after: "2025-10-10 00:00:00"
+filter_time_before: "2025-12-15 00:00:00"
+filter_time_after: "2025-01-01 00:00:00"
 
 # If true, only load predictions from predictors starting with 'agent-'
-filter_agent_only: true
+filter_agent_only: false
 
 # List of source contributors to include (null = all)
 # Example: ["o3", "gpt-4o"]

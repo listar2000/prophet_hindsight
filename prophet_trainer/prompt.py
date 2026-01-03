@@ -1,6 +1,5 @@
 import json
 
-
 PREDICTION_SYSTEM_PROMPT = """
 You are an AI assistant specialized in analyzing and predicting real-world events. 
 You have deep expertise in predicting the **probabilities** that each outcomes of a given event will be TRUE.
@@ -28,11 +27,9 @@ In the Probabilities Section, provide a JSON object with the predicted probabili
 ```
 <probabilities>
 {{
-    "probabilities": {{
-        "outcome_a": <probability_value_from_0_to_1>,
-        "outcome_b": <probability_value_from_0_to_1>,
-        ...
-    }}
+    "outcome_a": <probability_value_from_0_to_1>,
+    "outcome_b": <probability_value_from_0_to_1>,
+    ...
 }}
 </probabilities>
 ```
@@ -79,9 +76,10 @@ class PredictionPrompts:
         """
         return PREDICTION_SYSTEM_PROMPT
 
-
     @staticmethod
-    def create_user_prompt(event_title: str, outcomes_str: str, sources: str, market_data: dict = None) -> str:
+    def create_user_prompt(
+        event_title: str, outcomes_str: str, sources: str, market_data: dict | None = None
+    ) -> str:
         """
         Create the user prompt for providing source data.
 
@@ -91,12 +89,16 @@ class PredictionPrompts:
         Returns:
             Formatted user prompt string
         """
-        # Add market stats information if available
-        market_stats_info = ""
+        # Add market data information if available
         if market_data:
             market_data_info = f"""
             MARKET DATA FROM A MAJOR PREDICTION MARKET:
             {json.dumps(market_data, indent=2)}
             
             """.strip()
-        return PREDICTION_USER_PROMPT.format(event_title=event_title, outcomes_str=outcomes_str, sources=sources, market_data=market_data_info)
+        return PREDICTION_USER_PROMPT.format(
+            event_title=event_title,
+            outcomes_str=outcomes_str,
+            sources=sources,
+            market_data=market_data_info,
+        )

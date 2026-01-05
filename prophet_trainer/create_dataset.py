@@ -10,6 +10,7 @@ import json_repair
 import pandas as pd
 from datasets import Dataset, DatasetDict
 
+from prophet_hindsight.common.utils import unified_json_loads
 from prophet_trainer.prompt import PredictionPrompts
 
 logger = logging.getLogger(__name__)
@@ -44,9 +45,11 @@ def concatenate_csv_files(
 
 def message_format(row: pd.Series, conversational: bool = True) -> dict:
     event_title = row["title"]
-    market_outcome_str = row["market_outcome"]
-    market_outcome = json_repair.loads(market_outcome_str)
-    outcomes_str = ", ".join(list(market_outcome.keys()))
+    market_outcome = unified_json_loads(row["market_outcome"], dict, raise_on_unknown=False)
+    if isinstance(market_outcome, dict):
+        outcomes_str = ", ".join(list(market_outcome.keys()))
+    else:
+        outcomes_str = ""
     task_prompt = PredictionPrompts.create_task_prompt().strip()
     user_prompt = PredictionPrompts.create_user_prompt(
         event_title=event_title,
@@ -63,9 +66,13 @@ def message_format(row: pd.Series, conversational: bool = True) -> dict:
                 f"Key {key} not found in augmented_rationale_dict for row {row['event_ticker']}_{row['submission_id']}"
             )
             logger.warning(f"Augmented rationale dict: \n{augmented_rationale_dict}")
-            return None
+            return {}
 
-    probabilities = json_repair.loads(row["prediction"])["probabilities"]  # type: ignore
+    prediction = unified_json_loads(row["prediction"], dict, raise_on_unknown=False)
+    if isinstance(prediction, dict):
+        probabilities = prediction.get("probabilities", {})
+    else:
+        probabilities = {}
     probabilities_dict = {item["market"]: item["probability"] for item in probabilities}
     probabilities_str = json.dumps(probabilities_dict, indent=2).strip()
 
@@ -83,7 +90,7 @@ def message_format(row: pd.Series, conversational: bool = True) -> dict:
     return_dict = {
         "event_ticker": row["event_ticker"],
         "submission_id": row["submission_id"],
-        "market_outcome": market_outcome_str,
+        "market_outcome": str(market_outcome),
     }
 
     if conversational:
@@ -123,15 +130,22 @@ def filter_and_replace_rationale(
     """
     # Remove rows with NaN values
     filtered_df = rationale_df.dropna(subset=["augmented_rationale"]).copy()
+    # Take a string version of that row
+    augmented_rationale_str = filtered_df["augmented_rationale"].apply(str)
 
     # Filter out rows containing "leakage"
-    filtered_df = filtered_df[~filtered_df["augmented_rationale"].str.contains("leakage", na=False)]
+    filtered_df = filtered_df[~augmented_rationale_str.str.contains("leakage", na=False)]
 
     # Replace words
-    for word in REPLACE_WORDS:
-        filtered_df["augmented_rationale"] = filtered_df["augmented_rationale"].str.replace(
-            word, replace_word, regex=False
-        )
+    def apply_replace_word(row: pd.Series) -> pd.Series:
+        for key in row["augmented_rationale"]:
+            for word in REPLACE_WORDS:
+                row["augmented_rationale"][key] = row["augmented_rationale"][key].replace(
+                    word, replace_word
+                )
+        return row
+
+    filtered_df = filtered_df.apply(apply_replace_word, axis=1)
     return filtered_df
 
 

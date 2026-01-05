@@ -53,7 +53,6 @@ class DatasetCreationStage(PipelineStage):
                 all_rationales.append(df)
 
         if not all_rationales:
-            self.logger.error("No augmented reasoning data available")
             raise ValueError("No augmented reasoning data available")
 
         combined_rationale_df = pd.concat(all_rationales, ignore_index=True)

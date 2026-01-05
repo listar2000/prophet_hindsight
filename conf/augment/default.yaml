@@ -27,6 +27,8 @@ reasoning:
   use_openrouter: true
   # Batch size for processing
   batch_size: 100
+  # Batch number to start from
+  start_from_batch: 0
   # Timeout per request (seconds)
   timeout: 200
   

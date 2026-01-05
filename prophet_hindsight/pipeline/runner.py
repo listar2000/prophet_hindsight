@@ -193,10 +193,18 @@ class PipelineRunner:
         return stages_to_run
 
     def _save_checkpoint(self, state: PipelineState, run_dir: Path) -> None:
-        """Save pipeline state checkpoint."""
+        """
+        Save pipeline state checkpoint.
+
+        Only saves stages that were run in the current session to avoid
+        unnecessary I/O. Data is organized into stage-specific subdirectories.
+        """
         checkpoint_format = self.config.output.checkpoints.format
-        state.save(run_dir, format=checkpoint_format)
-        logger.debug(f"Saved checkpoint to {run_dir}")
+        skip_raw_data = self.config.output.checkpoints.skip_raw_data
+        # state.save() automatically saves only stages run in the current session
+        state.save(run_dir, format=checkpoint_format, skip_raw_data=skip_raw_data)
+        stages_saved = state.get_stages_run_in_session()
+        logger.debug(f"Saved checkpoint to {run_dir} (stages: {stages_saved})")
 
     def _load_checkpoint(self, run_dir: Path) -> PipelineState:
         """Load pipeline state from checkpoint."""

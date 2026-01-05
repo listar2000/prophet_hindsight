@@ -101,7 +101,8 @@ class LLMJudge:
         """
         self.model = model
         self.use_async = use_async
-        self.use_openrouter = use_openrouter
+        # we always use OpenAI's own endpoint for openai models
+        self.use_openrouter = use_openrouter and (not model.startswith("openai"))
         self.timeout = timeout
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor

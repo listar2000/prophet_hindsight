@@ -12,7 +12,9 @@ Supports:
 """
 
 import logging
+from pathlib import Path
 
+import pandas as pd
 from hydra.utils import instantiate
 
 from prophet_hindsight.common.prompts import (
@@ -82,6 +84,8 @@ class ReasonAugmentStage(PipelineStage):
 
         # Process each model
         for model, df in predictions_with_models.items():
+            self.current_model = model
+
             if len(df) == 0:
                 self.logger.info(f"No predictions assigned to {model}, skipping...")
                 continue
@@ -103,7 +107,8 @@ class ReasonAugmentStage(PipelineStage):
                 augmented_title_df=augmented_events_df,
                 prompt=prompt,  # Pass the prompt template
                 save_path=None,  # We'll save through state management
-                start_from_batch=0,
+                start_from_batch=augment_config.start_from_batch,
+                save_partial_callback=self._save_partial_callback,
             )
 
             if augmented_df is None or len(augmented_df) == 0:
@@ -116,6 +121,23 @@ class ReasonAugmentStage(PipelineStage):
             self.logger.info(f"Successfully augmented {success_count}/{len(df)} with {model}")
 
         return state
+
+    def _save_partial_callback(self, augmented_df: pd.DataFrame, batch_idx: int):
+        # Same logic as in the PipelineState._save_dataframe method
+        format = self.config.output.checkpoints.format
+        safe_name = self.current_model.replace("/", "_").replace(":", "_")
+        save_path = (
+            Path(self.config.get_run_dir()) / "reason_augment" / f"reasoning_{safe_name}.{format}"
+        )
+
+        if format == "parquet":
+            augmented_df.to_parquet(save_path, index=False)
+        else:
+            augmented_df.to_csv(save_path, index=False)
+
+        self.logger.info(
+            f"Model {self.current_model}; Batch {batch_idx}: Saved {len(augmented_df)} augmented reasoning traces to {save_path}"
+        )
 
     def _count_input_rows(self, state: PipelineState) -> int:
         if state.augmented_filtered_df is not None:

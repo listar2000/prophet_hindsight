@@ -101,7 +101,7 @@ class PipelineStage(ABC):
         # Get output row count
         output_rows = self._count_output_rows(state)
 
-        # Record metadata
+        # Record metadata (this also marks the stage as run in the session)
         metadata = StageMetadata(
             stage_name=self.name,
             started_at=started_at.isoformat(),
@@ -112,6 +112,9 @@ class PipelineStage(ABC):
             config_snapshot=self._get_config_snapshot(),
         )
         state.add_stage_metadata(metadata)
+
+        # Explicitly mark stage as run (redundant but explicit)
+        state.mark_stage_run(self.name)
 
         self.logger.info(
             f"Completed stage: {self.name} in {duration:.1f}s ({input_rows} -> {output_rows} rows)"

@@ -1,13 +1,15 @@
 import asyncio
 import logging
+from collections.abc import Callable
 
-import json_repair
+import numpy as np
 import pandas as pd
 import tqdm
 from pydantic import BaseModel
 
 from prophet_hindsight.common.judge import LLMJudge, MessageBuilder
 from prophet_hindsight.common.prompts import PromptTemplate, get_default_reasoning_augment_prompt
+from prophet_hindsight.common.utils import unified_json_loads
 
 logger = logging.getLogger(__name__)
 
@@ -22,16 +24,17 @@ class ReasonAugmentResponse(BaseModel):
 
 
 def _format_event_info(df_row: pd.Series) -> str:
-    market_data = json_repair.loads(df_row["market_data"])
+    market_data = unified_json_loads(df_row["market_data"], dict, raise_on_unknown=False)
+
     if isinstance(market_data, dict):
         potential_outcomes_str = list(market_data.keys())
+        return f"Title: {df_row['title']}\nPotential Outcomes: {potential_outcomes_str}"
     else:
-        potential_outcomes_str = []
-    return f"Title: {df_row['title']}\nPotential Outcomes: {potential_outcomes_str}"
+        return ""
 
 
 def _parse_rationale_and_prediction(raw_prediction: str) -> tuple[str, str]:
-    raw_json = json_repair.loads(raw_prediction)
+    raw_json = unified_json_loads(raw_prediction, dict, raise_on_unknown=False)
     if isinstance(raw_json, dict):
         return raw_json.get("rationale", ""), raw_json.get("probabilities", "")
     return "", ""
@@ -92,15 +95,24 @@ def augment_reasoning(
 
     # iteratively construct the prompts
     user_prompts, augmented_reasonings = [], []
-    for _, row in merged_df.iterrows():
+    for i, row in merged_df.iterrows():
         event_info = _format_event_info(row)
-        sources_data = json_repair.loads(row["sources"])
-        if isinstance(sources_data, list):
+        sources_data = unified_json_loads(
+            row["sources"], (list, np.ndarray), raise_on_unknown=False
+        )
+        if isinstance(sources_data, list | np.ndarray):
             sources = "\n".join([str(source) for source in sources_data])
         else:
-            sources = str(sources_data)
+            sources = ""
+
         market_data = row["market_data"]
         vanilla_rationale, llm_prediction = _parse_rationale_and_prediction(row["prediction"])
+
+        if not (event_info and sources and vanilla_rationale and llm_prediction):
+            logger.warning(
+                f"Skipping the {i}-th row (event_ticker: {row['event_ticker']}) because of missing information"
+            )
+            continue
 
         augmented_reasoning_dict = {
             "event_ticker": row["event_ticker"],
@@ -133,7 +145,7 @@ def augment_reasoning(
     )
 
     if cancelled_ids:
-        logger.warning(f"Failed to get responses for {len(cancelled_ids)} prompts: {cancelled_ids}")
+        logger.warning(f"Failed to get responses for {len(cancelled_ids)} prompts.")
 
     for i, augmented_reasoning_dict in enumerate(augmented_reasonings):
         if i in completed_results:
@@ -166,6 +178,7 @@ def batch_augment_reasoning(
     augmented_title_df: pd.DataFrame | None = None,
     prompt: PromptTemplate | None = None,
     save_path: str | None = None,
+    save_partial_callback: Callable | None = None,
     start_from_batch: int = 0,
     timeout: int = 200,
 ) -> pd.DataFrame | None:
@@ -223,12 +236,12 @@ def batch_augment_reasoning(
         # Save intermediate results after each batch
         if save_path is not None:
             current_df.to_csv(save_path, index=False)
-            # try:
-            #     # Reset indices for proper JSON serialization
-            #     current_df.index = pd.RangeIndex(start=0, stop=len(current_df))
-            #     current_df.to_json(save_path.replace("csv", "json"), orient="index", indent=2)
-            # except Exception as e:
-            #     logger.error(f"Error saving json for batch {i+1} of {total_batches}: {e}")
+        if save_partial_callback is not None:  # allow the caller to do sth here
+            save_partial_callback(current_df, i)
+
+        # DEBUG:
+        if i > 0:
+            break
 
     return current_df
 

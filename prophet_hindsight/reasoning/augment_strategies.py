@@ -30,19 +30,23 @@ class RepetitiveStrategy(AugmentationStrategy):
 class UniformRandomStrategy(AugmentationStrategy):
     """The strategy that let each LLM augment a random subset of predictions."""
 
-    overlap: bool = False  # whether we allow LLMs to augment the same predictions
-    fraction: float = (
-        1.0  # the fraction of predictions to augment for each LLM, should be between 0 and 1
-    )
-    seed: int = 2025  # the seed for the random number generator, -1 means no seed
+    overlap: bool
+    fraction: float
+    seed: int
+
+    def __init__(self, overlap: bool = False, fraction: float = 1.0, seed: int = 2025):
+        self.overlap = overlap
+        self.fraction = fraction
+        self.seed = seed
 
     def assign(self, models: list[str], predictions_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
         """Assign each LLM a random subset of predictions."""
         assert self.fraction >= 0 and self.fraction <= 1, "Fraction must be between 0 and 1"
         # the num of LLMs times the fraction should be <= 1 when overlap is False
-        assert (
-            not self.overlap or len(models) * self.fraction <= 1
-        ), "Fraction must be <= 1 / len(models) when overlap is False"
+        if not self.overlap:
+            assert (
+                len(models) * self.fraction <= 1
+            ), "Fraction must be <= 1 / len(models) when overlap is False"
         # delegate to the helper functions
         return (
             self._assign_no_overlap(models, predictions_df)

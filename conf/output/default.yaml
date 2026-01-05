@@ -23,6 +23,8 @@ dataset:
 checkpoints:
   # Whether to save checkpoints after each stage
   enabled: true
-  # Format for checkpoints: "parquet" or "pickle"
+  # Format for checkpoints: "parquet" or "csv"
   format: "parquet"
+  # whether to skip saving the original raw data
+  skip_raw_data: false
 

@@ -190,6 +190,7 @@ def add_market_baseline_predictions(
 
 DEFAULT_BRIER_RESULT_COLUMNS = [
     "forecaster",
+    # "prediction",
     "event_ticker",
     "submission_id",
     "weight",

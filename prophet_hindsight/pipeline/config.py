@@ -124,6 +124,7 @@ class ReasoningAugmentConfig:
     models: list[str] = field(default_factory=lambda: ["openai/gpt-5-mini"])
     use_openrouter: bool = False
     batch_size: int = 100
+    start_from_batch: int = 0
     timeout: int = 200
     strategy: dict = field(default_factory=dict)
 
@@ -153,7 +154,9 @@ class CheckpointConfig:
     """Checkpoint configuration."""
 
     enabled: bool = True
-    format: Literal["parquet", "pickle"] = "parquet"
+    format: Literal["parquet", "csv"] = "parquet"
+    # whether to skip saving the original raw data
+    skip_raw_data: bool = False
 
 
 @dataclass

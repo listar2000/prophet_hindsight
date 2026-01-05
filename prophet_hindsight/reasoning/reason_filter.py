@@ -10,6 +10,7 @@ import pandas as pd
 from sqlalchemy import Engine, text
 
 from prophet_hindsight.common.db import get_engine
+from prophet_hindsight.pipeline.state import PipelineState
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -365,7 +366,7 @@ def _augment_results_with_prediction_context(
 
     # 1. Drop all rows where the "prediction" column is not an instance of dict
     # 2. Turn the dictionary into a string by Json dumps
-    out = out[out["prediction"].apply(lambda x: isinstance(x, dict) or isinstance(x, str))]
+    out = out[out["prediction"].apply(lambda x: isinstance(x, dict | str))]
     out["prediction"] = out["prediction"].apply(
         lambda x: json.dumps(x) if isinstance(x, dict) else x
     )
@@ -427,13 +428,9 @@ def _augment_results_with_event_details(
 
 def _augment_results_with_market_data(
     results_df: pd.DataFrame,
-    submission_df: pd.DataFrame | str,
+    submission_df: pd.DataFrame,
     submission_id_col: str = "submission_id",
 ) -> pd.DataFrame:
-    if isinstance(submission_df, str):
-        # load it from the csv
-        submission_df = pd.read_csv(submission_df)
-
     # simply merge the `market_outcome` column into the results_df (merging by the submission_id key)
     if submission_id_col != "submission_id":
         results_df["submission_id"] = results_df[submission_id_col]
@@ -472,7 +469,7 @@ def augment_filtered_predictions(
         augmented_df, engine, filter_category=filter_category
     )
     if submission_df_path is not None:
-        submission_df = pd.read_csv(submission_df_path)
+        submission_df = PipelineState._load_dataframe(submission_df_path)
         augmented_df = _augment_results_with_market_data(augmented_df, submission_df)
     return augmented_df
 

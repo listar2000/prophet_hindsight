@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "dotenv>=0.9.9",
     "instructor==1.11.3",
+    "ipykernel>=7.1.0",
     "joblib>=1.5.2",
     "json-repair>=0.52.4",
     "openai==1.82.0",

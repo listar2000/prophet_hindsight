@@ -38,10 +38,10 @@ class DataLoadingStage(PipelineStage):
             # Load from files
             self.logger.info(
                 f"Loading predictions from {data_config.predictions_path}"
-                + "\n and submissions from {data_config.submissions_path}"
+                f" and submissions from {data_config.submissions_path}"
             )
-            predictions_df = pd.read_csv(data_config.predictions_path)
-            submissions_df = pd.read_csv(data_config.submissions_path)
+            predictions_df = PipelineState._load_dataframe(data_config.predictions_path)
+            submissions_df = PipelineState._load_dataframe(data_config.submissions_path)
         else:
             # Load from database
             predictions_df, submissions_df = self._load_df_from_database()

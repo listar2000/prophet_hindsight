@@ -31,6 +31,8 @@ reasoning:
   start_from_batch: 0
   # Timeout per request (seconds)
   timeout: 200
+  # An existing augmented reasoning dataframe to avoid re-computing certain rows
+  existing_augmented_reasoning_df: null
   
   # Used for instantiating the augmentation strategy class
   strategy:

@@ -70,10 +70,12 @@ class ReasonAugmentStage(PipelineStage):
         )
 
         # Get the predictions to augment
-        predictions_df = state.augmented_filtered_df.copy()  # type: ignore
-        augmented_events_df = state.augmented_events_df.copy()  # type: ignore
+        predictions_df, remaining_existing_df = self.get_remaining_df_to_augment(state)
 
-        self.logger.info(f"Augmenting reasoning for {len(predictions_df)} predictions")
+        if remaining_existing_df is not None:
+            state._existing_augmented_reasoning_df = remaining_existing_df
+
+        augmented_events_df = state.augmented_events_df.copy()  # type: ignore
 
         # Determine which models to use for each prediction
         models = augment_config.models
@@ -130,6 +132,8 @@ class ReasonAugmentStage(PipelineStage):
             Path(self.config.get_run_dir()) / "reason_augment" / f"reasoning_{safe_name}.{format}"
         )
 
+        if not save_path.parent.exists():
+            save_path.parent.mkdir(parents=True, exist_ok=True)
         if format == "parquet":
             augmented_df.to_parquet(save_path, index=False)
         else:
@@ -154,3 +158,38 @@ class ReasonAugmentStage(PipelineStage):
             "batch_size": self.config.augment.reasoning.batch_size,
             "strategy": self.config.augment.reasoning.strategy,
         }
+
+    """
+    Functionalities related to having an existing augmented reasoning dataframe
+    """
+
+    def get_remaining_df_to_augment(
+        self, state: PipelineState
+    ) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+        """
+        Get the remaining dataframe to augment and the existing (augmented) dataframe.
+        The remaining dataframe is the dataframe that has not been augmented yet -- based on (submission_id, forecaster) keys.
+        """
+        existing_df_path = self.config.augment.reasoning.existing_augmented_reasoning_df
+        predictions_df = state.augmented_filtered_df.copy()  # type: ignore
+        if existing_df_path is None:
+            logger.info(
+                f"No existing augmented reasoning dataframe provided, augmenting all {len(predictions_df)} predictions"
+            )
+            return predictions_df, None
+
+        existing_df = PipelineState._load_dataframe(existing_df_path)
+        # get the (1) remaining prediction df to augment and (2) the existing (augmented) df
+        pred_df_key = pd.MultiIndex.from_frame(
+            state.augmented_filtered_df[["submission_id", "forecaster"]]
+        )  # type: ignore
+        existing_df_key = pd.MultiIndex.from_frame(existing_df[["submission_id", "forecaster"]])
+
+        remain_pred_df = predictions_df[~pred_df_key.isin(existing_df_key)]
+        remain_existing_df = existing_df[existing_df_key.isin(pred_df_key)]
+
+        logger.info(
+            f"Augmenting {len(remain_pred_df)}/{len(predictions_df)} predictions, "
+            f"and taking {len(remain_existing_df)}/{len(existing_df)} rows from existing augmented reasoning dataframe"
+        )
+        return remain_pred_df, remain_existing_df

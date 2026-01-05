@@ -126,6 +126,7 @@ class ReasoningAugmentConfig:
     batch_size: int = 100
     start_from_batch: int = 0
     timeout: int = 200
+    existing_augmented_reasoning_df: str | None = None
     strategy: dict = field(default_factory=dict)
 
 

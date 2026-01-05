@@ -17,7 +17,7 @@
 # best to use 8B_full_single_device.yaml for those cases
 
 parent_dir: /net/scratch2/listar2000/prophet-hindsight
-output_dir: ${parent_dir}/.cache/torchtune/Qwen3-8B-Prophet-Trainer-Full
+output_dir: ${parent_dir}/.cache/torchtune/Qwen3-8B-Prophet-Forecast-SFT
 
 # Tokenizer
 tokenizer:
@@ -29,7 +29,7 @@ tokenizer:
 # Dataset
 dataset:
   _component_: torchtune.datasets.chat_dataset
-  source: listar2000/sports_augmented_sft
+  source: listar2000/full_augmented_sft
   conversation_column: messages
   conversation_style: openai
   split: train

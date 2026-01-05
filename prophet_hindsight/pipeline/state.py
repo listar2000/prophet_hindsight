@@ -130,6 +130,7 @@ class PipelineState:
     # Session tracking (not persisted)
     # Tracks which stages have been run in the current session for smart saving
     _stages_run_in_session: set[str] = field(default_factory=set, repr=False)
+    _existing_augmented_reasoning_df: pd.DataFrame | None = None
 
     def __post_init__(self):
         # Ensure _stages_run_in_session is always a set

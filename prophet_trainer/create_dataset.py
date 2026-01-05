@@ -138,6 +138,9 @@ def filter_and_replace_rationale(
 
     # Replace words
     def apply_replace_word(row: pd.Series) -> pd.Series:
+        # change the "augmented_rationale" field of row to a dictionary if it is a string
+        if isinstance(row["augmented_rationale"], str):
+            row["augmented_rationale"] = json_repair.loads(row["augmented_rationale"])
         for key in row["augmented_rationale"]:
             for word in REPLACE_WORDS:
                 row["augmented_rationale"][key] = row["augmented_rationale"][key].replace(

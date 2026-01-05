@@ -239,10 +239,6 @@ def batch_augment_reasoning(
         if save_partial_callback is not None:  # allow the caller to do sth here
             save_partial_callback(current_df, i)
 
-        # DEBUG:
-        if i > 0:
-            break
-
     return current_df
 
 

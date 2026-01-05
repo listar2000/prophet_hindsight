@@ -52,6 +52,16 @@ class DatasetCreationStage(PipelineStage):
             if df is not None and len(df) > 0:
                 all_rationales.append(df)
 
+        # If specified, we merge back the existing augmented reasoning dataframe to the new augmented reasoning dataframe
+        if (
+            self.config.augment.reasoning.existing_augmented_reasoning_df is not None
+            and state._existing_augmented_reasoning_df is not None
+        ):
+            logger.info(
+                f"Merging back {len(state._existing_augmented_reasoning_df)} existing augmented reasoning traces"
+            )
+            all_rationales.append(state._existing_augmented_reasoning_df)
+
         if not all_rationales:
             raise ValueError("No augmented reasoning data available")
 

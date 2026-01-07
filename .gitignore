@@ -26,3 +26,6 @@ torchtune/
 # Cursor related (LLM)
 .cursor/
 PLAN.md
+
+# Generated artifacts
+evals/

@@ -27,6 +27,8 @@ async def get_response(model_name: str, task_idx: int, messages: list[dict]):
     # ref: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
     if use_openrouter_flag:
         extra_kwargs = {"reasoning": {"effort": "medium"}}
+    else:
+        extra_kwargs = {}
 
     response = await client.chat.completions.create(
         model=model_name,
@@ -42,9 +44,12 @@ async def batch_eval(model_name: str, df: pd.DataFrame, save_path: str, result_c
     results, tasks = [], []
     for i, row in df.iterrows():
         messages = row["messages"]
-        assert len(messages) == 3 and messages[-1]["role"] == "assistant", "Last message must be the assistant message"
-        # remove the last message to get prediction
-        messages = messages[:-1]
+        if len(messages) == 3:
+            assert messages[-1]["role"] == "assistant", "Last message must be the assistant message"
+            # remove the last message to get prediction
+            messages = messages[:-1]
+        else:
+            assert len(messages) == 2, "Messages must be a list of 2 or 3 dicts"
         task = asyncio.create_task(get_response(model_name, i, messages))
         tasks.append(task)
     
@@ -71,9 +76,9 @@ if __name__ == "__main__":
     Example usage (sglang local):
     python -m prophet_eval.eval \
         --model-name .cache/torchtune/Qwen3-8B-Prophet-Forecast-SFT-2-Epochs/epoch_0 \
-        --dataset-name listar2000/full_augmented_sft \
+        --dataset-name ../rllm/rllm/data/datasets/full_augmented_forecasting/test.parquet \
         --split test \
-        --save-path evals/qwen3-8b-sft-epoch-0/full-in-2-epochs.csv \
+        --save-path evals/qwen3-8b-sft-epoch-0/prophet-subset-300.csv \
         --result-col prediction
     
     Example usage (openrouter):
@@ -82,6 +87,14 @@ if __name__ == "__main__":
         --dataset-name listar2000/full_augmented_sft \
         --split test \
         --save-path evals/grok-4/full.csv \
+        --result-col prediction \
+        --use-openrouter \
+
+    python -m prophet_eval.eval \
+        --model-name x-ai/grok-4 \
+        --dataset-name ../rllm/rllm/data/datasets/full_augmented_forecasting/test.parquet \
+        --split test \
+        --save-path evals/grok-4/prophet-subset-300.csv \
         --result-col prediction \
         --use-openrouter \
     """
@@ -106,8 +119,13 @@ if __name__ == "__main__":
     else:  # use local sglang server
         client = AsyncOpenAI(base_url=f"http://localhost:{args.port}/v1", api_key="None")
 
-    ds = load_hf_dataset(args.dataset_name, args.split)
-    df = pd.DataFrame(ds)
+    # check whether the dataset-name ends with `.parquet` -- if so directly load the parquet file
+    if args.dataset_name.endswith(".parquet"):
+        df = pd.read_parquet(args.dataset_name)
+    else:
+        ds = load_hf_dataset(args.dataset_name, args.split)
+        df = pd.DataFrame(ds)
+
     if args.debug_mode:
         df = df.head(10)
 

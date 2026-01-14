@@ -1,12 +1,10 @@
-# Main configuration file for the SFT Data Curation Pipeline
+# Main configuration file for the RL Data Curation Pipeline
 # Use Hydra to override any configuration at runtime
-# Example: python -m prophet_hindsight.pipeline.run_pipeline data.filter_time_before="2025-11-01 00:00:00"
-#
-# For RL pipeline, use: python -m prophet_hindsight.pipeline.run_rl_pipeline
+# Example: python -m prophet_hindsight.pipeline.run_rl_pipeline data.filter_time_before="2025-11-01 00:00:00"
 
 defaults:
   - data: default
-  - filter: default
+  - rl_selection: default
   - augment: default
   - output: default
   - prompts: default
@@ -19,7 +17,7 @@ run:
   # Random seed for reproducibility
   seed: 42
   # Resume from a specific stage (null = start from beginning)
-  # Options for SFT: data_loading, evaluation, filtering, event_augment, reason_augment, dataset_creation
+  # Options for RL: data_loading, evaluation, rl_selection, event_augment, rl_dataset_creation
   resume_from: null
   # Create a new run after resuming from a checkpoint. Only effective if resume_from is not null.
   new_run_name: null
@@ -27,9 +25,8 @@ run:
   end_at: null
   # Skip specific stages (list of stage names)
   skip_stages: []
-  # Pipeline type: "sft" for supervised fine-tuning (default)
-  # Use config_rl.yaml or run_rl_pipeline.py for RL pipeline
-  pipeline_type: sft
+  # Pipeline type: "rl" for reinforcement learning
+  pipeline_type: rl
 
 # Hydra configuration
 hydra:
@@ -38,4 +35,3 @@ hydra:
   sweep:
     dir: ${output.base_dir}/multirun/${now:%Y-%m-%d_%H-%M-%S}
     subdir: ${hydra.job.num}
-

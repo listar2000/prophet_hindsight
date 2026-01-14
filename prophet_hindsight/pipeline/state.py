@@ -16,7 +16,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Mapping of stage names to their output DataFrame attributes
+# Mapping of stage names to their output DataFrame attributes (SFT pipeline)
 # This determines which attributes are saved in which stage subdirectory
 STAGE_OUTPUTS: dict[str, list[str]] = {
     "data_loading": ["predictions_df", "submissions_df"],
@@ -32,6 +32,15 @@ STAGE_OUTPUTS: dict[str, list[str]] = {
     "dataset_creation": ["final_dataset_path"],
 }
 
+# Mapping of RL pipeline stage names to their output DataFrame attributes
+RL_STAGE_OUTPUTS: dict[str, list[str]] = {
+    "data_loading": ["predictions_df", "submissions_df"],
+    "evaluation": ["brier_scores_df"],
+    "rl_selection": ["rl_selected_df", "rl_augmented_df"],
+    "event_augment": ["augmented_events_df"],
+    "rl_dataset_creation": ["final_dataset_path"],
+}
+
 # Flat list of all DataFrame attributes (excluding special ones like augmented_reasoning_df_map)
 DF_ATTRS = [
     "predictions_df",
@@ -42,6 +51,9 @@ DF_ATTRS = [
     "combined_filtered_df",
     "augmented_filtered_df",
     "augmented_events_df",
+    # RL-specific
+    "rl_selected_df",
+    "rl_augmented_df",
 ]
 
 
@@ -111,13 +123,18 @@ class PipelineState:
     # Stage 4: Event Augmentation
     augmented_events_df: pd.DataFrame | None = None
 
-    # Stage 5: Reasoning Augmentation
+    # Stage 5: Reasoning Augmentation (SFT only)
     # Maps augmenter model name -> augmented reasoning DataFrame
     augmented_reasoning_df_map: dict[str, pd.DataFrame] = field(default_factory=dict)
 
     # Stage 6: Dataset Creation
     # Note: HuggingFace DatasetDict is not stored here, only the path
     final_dataset_path: str | None = None
+
+    # RL Pipeline specific fields
+    # Stage 3 (RL): Selection (replaces filtering)
+    rl_selected_df: pd.DataFrame | None = None  # Deduplicated problems
+    rl_augmented_df: pd.DataFrame | None = None  # Augmented with sources, context, etc.
 
     # Prompts used in this run (for reproducibility)
     # Maps prompt name -> prompt dict (serialized PromptTemplate)
@@ -213,8 +230,8 @@ class PipelineState:
             # Default: save only stages run in current session
             stages_to_save = self._stages_run_in_session
         elif "all" in stages_to_save:
-            # Force save all stages that have data
-            stages_to_save = set(STAGE_OUTPUTS.keys())
+            # Force save all stages that have data (both SFT and RL)
+            stages_to_save = set(STAGE_OUTPUTS.keys()) | set(RL_STAGE_OUTPUTS.keys())
 
         logger.info(f"Saving state for stages: {stages_to_save}")
 
@@ -226,9 +243,12 @@ class PipelineState:
             with open(output_dir / "prompts_used.json", "w") as f:
                 json.dump(self.prompts_used, f, indent=2)
 
+        # Combine SFT and RL stage outputs for lookup
+        all_stage_outputs = {**STAGE_OUTPUTS, **RL_STAGE_OUTPUTS}
+
         # Save DataFrames organized by stage
         for stage_name in stages_to_save:
-            if stage_name not in STAGE_OUTPUTS:
+            if stage_name not in all_stage_outputs:
                 continue
             elif stage_name == "data_loading" and skip_raw_data:
                 logger.info("Skipping saving raw data after data loading stage")
@@ -237,7 +257,7 @@ class PipelineState:
             stage_dir = output_dir / stage_name
             stage_dir.mkdir(parents=True, exist_ok=True)
 
-            for attr in STAGE_OUTPUTS[stage_name]:
+            for attr in all_stage_outputs[stage_name]:
                 if attr == "augmented_reasoning_df_map":
                     # Special handling for the map of reasoning DataFrames
                     for model_name, df in self.augmented_reasoning_df_map.items():
@@ -250,11 +270,13 @@ class PipelineState:
                     pass
                 else:
                     # Regular DataFrame attribute
-                    df = getattr(self, attr)
+                    df = getattr(self, attr, None)
                     if df is not None:
                         logger.info(f"Saving {attr} to {stage_dir}")
                         try:
-                            self._save_dataframe(df, stage_dir / f"{attr}.{format}", format)
+                            self._save_dataframe(
+                                df, stage_dir / f"{attr}.{format}", format
+                            )
                         except Exception as e:
                             logger.error(f"Error saving dataframe {attr}: {e}")
                             logger.info(f"Columns of dataframe {attr}: {df.columns}")
@@ -279,9 +301,10 @@ class PipelineState:
             json.dump(metadata, f, indent=2)
 
     def _get_stages_with_data(self) -> list[str]:
-        """Get list of stages that have data saved."""
+        """Get list of stages that have data saved (both SFT and RL)."""
         stages = []
-        for stage_name, attrs in STAGE_OUTPUTS.items():
+        all_stage_outputs = {**STAGE_OUTPUTS, **RL_STAGE_OUTPUTS}
+        for stage_name, attrs in all_stage_outputs.items():
             has_data = False
             for attr in attrs:
                 if attr == "augmented_reasoning_df_map":
@@ -291,7 +314,7 @@ class PipelineState:
                     if self.final_dataset_path:
                         has_data = True
                 else:
-                    if getattr(self, attr) is not None:
+                    if getattr(self, attr, None) is not None:
                         has_data = True
             if has_data:
                 stages.append(stage_name)
@@ -321,7 +344,9 @@ class PipelineState:
             created_at=metadata["created_at"],
             current_stage=metadata.get("current_stage"),
             final_dataset_path=metadata.get("final_dataset_path"),
-            stage_history=[StageMetadata.from_dict(s) for s in metadata.get("stage_history", [])],
+            stage_history=[
+                StageMetadata.from_dict(s) for s in metadata.get("stage_history", [])
+            ],
             prompts_used=metadata.get("prompts_used", {}),
         )
 
@@ -332,8 +357,9 @@ class PipelineState:
         return state
 
     def _load_from_stage_dirs(self, output_dir: Path) -> None:
-        """Load DataFrames from stage-based directory structure."""
-        for stage_name, attrs in STAGE_OUTPUTS.items():
+        """Load DataFrames from stage-based directory structure (both SFT and RL)."""
+        all_stage_outputs = {**STAGE_OUTPUTS, **RL_STAGE_OUTPUTS}
+        for stage_name, attrs in all_stage_outputs.items():
             stage_dir = output_dir / stage_name
             if not stage_dir.exists():
                 continue
@@ -348,7 +374,9 @@ class PipelineState:
                                 "_", "/", 1
                             )  # Restore first slash
                         )
-                        self.augmented_reasoning_df_map[model_name] = self._load_dataframe(path)
+                        self.augmented_reasoning_df_map[model_name] = (
+                            self._load_dataframe(path)
+                        )
                 elif attr == "final_dataset_path":
                     # Already loaded from metadata
                     pass
@@ -359,7 +387,9 @@ class PipelineState:
                         setattr(self, attr, self._load_dataframe(path))
 
     @staticmethod
-    def _save_dataframe(df: pd.DataFrame, path: Path | str, format: str | None = None) -> None:
+    def _save_dataframe(
+        df: pd.DataFrame, path: Path | str, format: str | None = None
+    ) -> None:
         if format is None:
             format = str(path).split(".")[-1]
         if format == "parquet":
@@ -393,7 +423,9 @@ class PipelineState:
         if self.brier_scores_df is not None:
             lines.append(f"  - Brier Scores: {len(self.brier_scores_df)} rows")
         if self.combined_filtered_df is not None:
-            lines.append(f"  - Filtered Predictions: {len(self.combined_filtered_df)} rows")
+            lines.append(
+                f"  - Filtered Predictions: {len(self.combined_filtered_df)} rows"
+            )
         if self.augmented_events_df is not None:
             lines.append(f"  - Augmented Events: {len(self.augmented_events_df)} rows")
         if self.augmented_reasoning_df_map:
@@ -401,6 +433,11 @@ class PipelineState:
             lines.append(
                 f"  - Augmented Reasonings: {total} rows across {len(self.augmented_reasoning_df_map)} models"
             )
+        # RL-specific fields
+        if self.rl_selected_df is not None:
+            lines.append(f"  - RL Selected Problems: {len(self.rl_selected_df)} rows")
+        if self.rl_augmented_df is not None:
+            lines.append(f"  - RL Augmented Problems: {len(self.rl_augmented_df)} rows")
 
         if self.stage_history:
             lines.extend(["", "Stage History:"])
@@ -410,6 +447,8 @@ class PipelineState:
                 )
 
         if self._stages_run_in_session:
-            lines.extend(["", f"Stages run this session: {self._stages_run_in_session}"])
+            lines.extend(
+                ["", f"Stages run this session: {self._stages_run_in_session}"]
+            )
 
         return "\n".join(lines)

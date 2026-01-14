@@ -1,7 +1,8 @@
 """
-Configuration models for the SFT Data Curation Pipeline.
+Configuration models for the SFT/RL Data Curation Pipeline.
 
 Uses Pydantic for type validation and OmegaConf/Hydra for configuration management.
+Supports both SFT (Supervised Fine-Tuning) and RL (Reinforcement Learning) pipelines.
 """
 
 from dataclasses import dataclass, field
@@ -10,8 +11,15 @@ from functools import cached_property
 from typing import Literal
 
 
+class PipelineType(str, Enum):
+    """Type of pipeline to run."""
+
+    SFT = "sft"  # Supervised Fine-Tuning: full pipeline with reasoning augmentation
+    RL = "rl"  # Reinforcement Learning: prompt-only, no reasoning augmentation
+
+
 class StageType(str, Enum):
-    """Enumeration of pipeline stages."""
+    """Enumeration of pipeline stages (SFT pipeline)."""
 
     DATA_LOADING = "data_loading"
     EVALUATION = "evaluation"
@@ -22,7 +30,7 @@ class StageType(str, Enum):
 
     @classmethod
     def all_stages(cls) -> list["StageType"]:
-        """Return all stages in execution order."""
+        """Return all stages in execution order (SFT)."""
         return [
             cls.DATA_LOADING,
             cls.EVALUATION,
@@ -39,6 +47,33 @@ class StageType(str, Enum):
         return {stage: i for i, stage in enumerate(stages)}
 
 
+class RLStageType(str, Enum):
+    """Enumeration of pipeline stages for RL pipeline."""
+
+    DATA_LOADING = "data_loading"
+    EVALUATION = "evaluation"
+    RL_SELECTION = "rl_selection"  # Replaces filtering for RL
+    EVENT_AUGMENT = "event_augment"
+    RL_DATASET_CREATION = "rl_dataset_creation"  # RL-specific dataset creation
+
+    @classmethod
+    def all_stages(cls) -> list["RLStageType"]:
+        """Return all stages in execution order (RL)."""
+        return [
+            cls.DATA_LOADING,
+            cls.EVALUATION,
+            cls.RL_SELECTION,
+            cls.EVENT_AUGMENT,
+            cls.RL_DATASET_CREATION,
+        ]
+
+    @classmethod
+    @cached_property
+    def get_stage_orders(cls) -> dict["RLStageType", int]:
+        stages = cls.all_stages()
+        return {stage: i for i, stage in enumerate(stages)}
+
+
 @dataclass
 class RunConfig:
     """Run-level configuration."""
@@ -49,6 +84,8 @@ class RunConfig:
     new_run_name: str | None = None
     end_at: str | None = None
     skip_stages: list[str] = field(default_factory=list)
+    # Pipeline type: "sft" or "rl"
+    pipeline_type: str = "sft"
 
 
 @dataclass
@@ -97,12 +134,33 @@ class AbsoluteFilterConfig:
 
 @dataclass
 class FilterConfig:
-    """Complete filtering configuration."""
+    """Complete filtering configuration (SFT pipeline)."""
 
     metric_col: str = "brier_score"
     z_score: ZScoreFilterConfig = field(default_factory=ZScoreFilterConfig)
     ambiguous: AmbiguousFilterConfig = field(default_factory=AmbiguousFilterConfig)
     absolute: AbsoluteFilterConfig = field(default_factory=AbsoluteFilterConfig)
+
+
+@dataclass
+class RLSelectionConfig:
+    """RL data selection configuration.
+
+    Unlike SFT filtering which selects high-quality traces, RL selection:
+    - Deduplicates problems (one per (event_ticker, submission_id) pair)
+    - Excludes test set problems
+    - Does NOT filter by quality (we want more diverse data for RL)
+    """
+
+    # Path to test set CSV with event_ticker and submission_id columns to exclude
+    test_set_path: str | None = None
+    # Strategy for selecting which prediction to keep when multiple exist
+    # Options: "first", "random", "best_brier" (lowest Brier score)
+    dedup_strategy: str = "random"
+    # Maximum number of problems to select (-1 = no limit)
+    max_problems: int = -1
+    # Whether to shuffle the final selection (useful for RL training)
+    shuffle: bool = True
 
 
 @dataclass
@@ -140,9 +198,29 @@ class AugmentConfig:
 
 @dataclass
 class DatasetConfig:
-    """Dataset creation configuration."""
+    """Dataset creation configuration (SFT pipeline)."""
 
     test_size: float = 0.1
+    conversational: bool = True
+    push_to_hub: bool = False
+    repo_id: str | None = None
+    private: bool = True
+    n_jobs: int = 8
+
+
+@dataclass
+class RLDatasetConfig:
+    """Dataset creation configuration for RL pipeline.
+
+    Unlike SFT which includes reasoning traces, RL datasets contain only:
+    - system prompt
+    - user prompt (event info, sources, market data)
+    No assistant response is included.
+    """
+
+    # Test/train split size (for validation during RL training)
+    test_size: float = 0.1
+    # Whether to use conversational format (messages list)
     conversational: bool = True
     push_to_hub: bool = False
     repo_id: str | None = None
@@ -184,6 +262,8 @@ class OutputConfig:
     base_dir: str = "data/runs"
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     checkpoints: CheckpointConfig = field(default_factory=CheckpointConfig)
+    # RL-specific dataset config
+    rl_dataset: RLDatasetConfig = field(default_factory=RLDatasetConfig)
 
 
 @dataclass
@@ -193,14 +273,26 @@ class PipelineConfig:
 
     This is the top-level configuration that contains all sub-configurations.
     It can be constructed from a Hydra DictConfig or programmatically.
+    Supports both SFT and RL pipelines via run.pipeline_type.
     """
 
     run: RunConfig = field(default_factory=RunConfig)
     data: DataConfig = field(default_factory=DataConfig)
+    # SFT-specific filtering config
     filter: FilterConfig = field(default_factory=FilterConfig)
+    # RL-specific selection config
+    rl_selection: RLSelectionConfig = field(default_factory=RLSelectionConfig)
     augment: AugmentConfig = field(default_factory=AugmentConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     prompts: PromptsConfig = field(default_factory=PromptsConfig)
+
+    def is_rl_pipeline(self) -> bool:
+        """Check if this is an RL pipeline configuration."""
+        return self.run.pipeline_type == "rl"
+
+    def is_sft_pipeline(self) -> bool:
+        """Check if this is an SFT pipeline configuration."""
+        return self.run.pipeline_type == "sft"
 
     @classmethod
     def from_hydra(cls, cfg) -> "PipelineConfig":
@@ -222,6 +314,7 @@ class PipelineConfig:
         run_cfg = cfg_dict.get("run", {}) or {}
         data_cfg = cfg_dict.get("data", {}) or {}
         filter_cfg = cfg_dict.get("filter", {}) or {}
+        rl_selection_cfg = cfg_dict.get("rl_selection", {}) or {}
         augment_cfg = cfg_dict.get("augment", {}) or {}
         output_cfg = cfg_dict.get("output", {}) or {}
 
@@ -234,6 +327,7 @@ class PipelineConfig:
                 ambiguous=AmbiguousFilterConfig(**filter_cfg.get("ambiguous", {})),
                 absolute=AbsoluteFilterConfig(**filter_cfg.get("absolute", {})),
             ),
+            rl_selection=RLSelectionConfig(**rl_selection_cfg),
             augment=AugmentConfig(
                 event=EventAugmentConfig(**augment_cfg.get("event", {})),
                 reasoning=ReasoningAugmentConfig(**augment_cfg.get("reasoning", {})),
@@ -242,6 +336,7 @@ class PipelineConfig:
                 base_dir=output_cfg.get("base_dir", "data/runs"),
                 dataset=DatasetConfig(**output_cfg.get("dataset", {})),
                 checkpoints=CheckpointConfig(**output_cfg.get("checkpoints", {})),
+                rl_dataset=RLDatasetConfig(**output_cfg.get("rl_dataset", {})),
             ),
             prompts=cls._parse_prompts_config(cfg_dict.get("prompts", {})),
         )

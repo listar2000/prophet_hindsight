@@ -4,11 +4,26 @@
 # Base directory for all pipeline outputs
 base_dir: "data/runs"
 
-# Dataset creation settings
+# Dataset creation settings (SFT pipeline)
 dataset:
   # Proportion of data to use for test split
   test_size: 0.1
   # Whether to use conversational format (vs prompt-completion)
+  conversational: true
+  # Whether to push to HuggingFace Hub
+  push_to_hub: false
+  # HuggingFace Hub repository ID
+  repo_id: null
+  # Whether the Hub dataset should be private
+  private: true
+  # Number of parallel jobs for saving (-1 = all cores)
+  n_jobs: 8
+
+# RL Dataset creation settings
+rl_dataset:
+  # Proportion of data to use for test split
+  test_size: 0.1
+  # Whether to use conversational format (messages list)
   conversational: true
   # Whether to push to HuggingFace Hub
   push_to_hub: false

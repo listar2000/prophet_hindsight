@@ -2,7 +2,7 @@
 Pipeline Runner - Orchestrates the execution of all pipeline stages.
 
 Supports:
-- Full pipeline execution
+- Full pipeline execution (SFT and RL)
 - Resume from checkpoint
 - Stage-specific runs
 - Comprehensive logging
@@ -14,9 +14,9 @@ from pathlib import Path
 
 from prophet_hindsight.pipeline.config import PipelineConfig
 from prophet_hindsight.pipeline.stages import (
-    STAGE_ORDER,
-    STAGE_REGISTRY,
     PipelineStage,
+    get_stage_order,
+    get_stage_registry,
 )
 from prophet_hindsight.pipeline.state import PipelineState
 
@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 class PipelineRunner:
     """
     Orchestrates the execution of all pipeline stages.
+
+    Supports both SFT and RL pipelines based on config.run.pipeline_type.
 
     Usage:
         config = PipelineConfig.from_hydra(cfg)
@@ -41,16 +43,21 @@ class PipelineRunner:
             config: Complete pipeline configuration
         """
         self.config = config
+        self.pipeline_type = config.run.pipeline_type
+        self.stage_order = get_stage_order(self.pipeline_type)
+        self.stage_registry = get_stage_registry(self.pipeline_type)
         self.stages: list[PipelineStage] = self._create_stages()
 
         # Setup logging
         self._setup_logging()
 
+        logger.info(f"Initialized {self.pipeline_type.upper()} pipeline runner")
+
     def _create_stages(self) -> list[PipelineStage]:
-        """Create stage instances in execution order."""
+        """Create stage instances in execution order based on pipeline type."""
         stages = []
-        for stage_name in STAGE_ORDER:
-            stage_class = STAGE_REGISTRY[stage_name]
+        for stage_name in self.stage_order:
+            stage_class = self.stage_registry[stage_name]
             stages.append(stage_class(self.config))
         return stages
 
@@ -114,7 +121,8 @@ class PipelineRunner:
             else:
                 # Start fresh
                 state = PipelineState(
-                    run_name=run_config.name or datetime.now().strftime("%Y%m%d_%H%M%S"),
+                    run_name=run_config.name
+                    or datetime.now().strftime("%Y%m%d_%H%M%S"),
                 )
                 logger.info(f"Starting new pipeline run: {state.run_name}")
 
@@ -158,28 +166,29 @@ class PipelineRunner:
         - Last completed stage in state
         """
         run_config = self.config.run
+        stage_order = self.stage_order
 
         # Find start index
         start_idx = 0
         if run_config.resume_from:
             # Start from specified stage
             try:
-                start_idx = STAGE_ORDER.index(run_config.resume_from)
+                start_idx = stage_order.index(run_config.resume_from)
             except ValueError:
                 raise ValueError(f"Unknown stage: {run_config.resume_from}")
         elif state.get_last_completed_stage():
             # Resume from next stage after last completed
             last_stage = state.get_last_completed_stage()
             try:
-                start_idx = STAGE_ORDER.index(last_stage) + 1
+                start_idx = stage_order.index(last_stage) + 1
             except ValueError:
                 start_idx = 0
 
         # Find end index
-        end_idx = len(STAGE_ORDER)
+        end_idx = len(stage_order)
         if run_config.end_at:
             try:
-                end_idx = STAGE_ORDER.index(run_config.end_at) + 1
+                end_idx = stage_order.index(run_config.end_at) + 1
             except ValueError:
                 raise ValueError(f"Unknown stage: {run_config.end_at}")
 
@@ -212,7 +221,9 @@ class PipelineRunner:
             raise FileNotFoundError(f"Checkpoint directory not found: {run_dir}")
         return PipelineState.load(run_dir)
 
-    def run_stage(self, stage_name: str, state: PipelineState | None = None) -> PipelineState:
+    def run_stage(
+        self, stage_name: str, state: PipelineState | None = None
+    ) -> PipelineState:
         """
         Run a single stage.
 
@@ -223,13 +234,14 @@ class PipelineRunner:
         Returns:
             Updated pipeline state
         """
-        if stage_name not in STAGE_REGISTRY:
+        if stage_name not in self.stage_registry:
             raise ValueError(f"Unknown stage: {stage_name}")
 
         # Initialize state if needed
         if state is None:
             state = PipelineState(
-                run_name=self.config.run.name or datetime.now().strftime("%Y%m%d_%H%M%S"),
+                run_name=self.config.run.name
+                or datetime.now().strftime("%Y%m%d_%H%M%S"),
             )
 
         # Find and execute stage

@@ -1,0 +1,21 @@
+# RL Selection configuration
+# Controls how problems are selected and deduplicated for RL training
+
+# Path to test set CSV with event_ticker and submission_id columns to exclude
+# Problems in the test set will not be included in RL training data
+test_set_path: null
+
+# Strategy for selecting which prediction to keep when multiple exist
+# Options:
+#   - "first": Keep first occurrence (deterministic)
+#   - "random": Randomly select one (uses run.seed)
+#   - "best_brier": Keep prediction with lowest Brier score
+dedup_strategy: "first"
+
+# Maximum number of problems to select (-1 = no limit)
+# Useful for creating smaller RL datasets for experimentation
+max_problems: -1
+
+# Whether to shuffle the final selection
+# Recommended for RL training to avoid ordering biases
+shuffle: true
